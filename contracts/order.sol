@@ -56,13 +56,14 @@ contract RestaurantOrder is
     mapping(string => mapping(bytes32 => uint)) mDishReviewIndex; 
     IRestaurantReporting public Report;
     mapping(uint256 => Review[]) private reviewsByDate; // date => Review[]
+    // mapping(bytes32 =>mapping(uint => uint)) public mOrderIdToCoursePrice; //orderId => courseId => coursePrice
 
     // Events
     event OrderMade(uint indexed table, bytes32 indexed orderId, uint courseCount);
     event PaymentMade(uint indexed table, bytes32 indexed paymentId, uint total);
     event PaymentConfirmed(bytes32 indexed paymentId, address staff);
 
-    uint256[42] private __gap;
+    uint256[41] private __gap;
 
     constructor() {
         _disableInitializers();
@@ -229,7 +230,6 @@ contract RestaurantOrder is
             totalPrice += _addCourse(table, orderId, courseIdStart + i, dishCodes[i], quantities[i], notes[i],variantIDs[i]);
         }
     }
-
     function _addCourse(
         uint table,
         bytes32 orderId,
@@ -265,6 +265,7 @@ contract RestaurantOrder is
         mTableToCourses[table].push(course);
         mTableToIdToCourse[table][course.id] = course ;
         coursePrice = dishPrice * quantity;
+        mOrderIdToCoursePrice[orderId][course.id] = coursePrice;
     }
 
     function _createOrUpdatePayment(
@@ -524,7 +525,7 @@ contract RestaurantOrder is
         for (uint i = 0; i < mTableToCourses[table].length; i++) {
             SimpleCourse memory course = mTableToCourses[table][i];
             MANAGEMENT.UpdateOrderNum(course.dishCode,course.quantity,block.timestamp);
-            // Report.UpdateDishDailyData(course.dishCode,date,,1);
+            Report.UpdateDishDailyData(course.dishCode,block.timestamp,dishPrice,1); //1 là 1 order
         }
         MANAGEMENT.UpdateTotalRevenueReport(block.timestamp,payment.foodCharge); //FE gọi sau 
         emit PaymentMade(table, payment.id, payment.total);

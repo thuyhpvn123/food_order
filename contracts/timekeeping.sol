@@ -207,9 +207,10 @@ contract AttendanceSystem is
     function approveIncident(
         bytes32 id,
         bool isApproved
-    )external{
+    )external onlyManagerOrHR{
         ReportCheckinAccident storage incident  = mIdToIncident[id];
         require(incident.staff != address(0),"Incident not found");
+        require(incident.approvedAt == 0,"Incident is already approved or denied");
         incident.approved = isApproved;
         incident.approvedAt = block.timestamp;
         ReportCheckinAccident[] storage arr = mStaffToDateToIncidents[incident.staff];
@@ -296,7 +297,6 @@ function checkIn(
         WorkPlaceAttendance memory _workPlace,
         uint createdAt
     ) internal  {
-        require(msg.sender == BE,"only BE can call");
         _checkIn(_staff,_workPlace, createdAt);
     }
    
@@ -1228,7 +1228,7 @@ function checkIn(
     // Alternative: Flexible holiday management với storage
     mapping(uint256 => bool) public companyHolidays; // date => isHoliday
 
-    function setCompanyHolidays(uint256[] memory _dates, bool[] memory _isHoliday) external onlyBE {
+    function setCompanyHolidays(uint256[] memory _dates, bool[] memory _isHoliday) external onlyManagerOrHR {
         require(_dates.length == _isHoliday.length, "Array length mismatch");
         
         for (uint256 i = 0; i < _dates.length; i++) {

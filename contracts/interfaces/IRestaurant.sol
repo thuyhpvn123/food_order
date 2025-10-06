@@ -481,4 +481,9 @@ struct NewDish {
     string codeDish;
     uint createAt;
 }
+struct RankReport{
+    uint createdAt;
+    uint rank;
+}
+
 

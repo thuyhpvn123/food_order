@@ -84,8 +84,10 @@ contract Management is
     mapping(uint =>string[]) public mMonthToDishCodeOrder;
     mapping(uint =>string[]) public mDayToDishCodeOrder;
     address public report;
+    mapping(string =>RankReport[]) public mDishCodeToRankReport;
+
     // Reserve storage for upgradeability
-    uint256[11] private __gap;
+    uint256[10] private __gap;
 
     constructor() {
         _disableInitializers();
@@ -1061,6 +1063,42 @@ contract Management is
                 arr[j] = key;
             }
         }
+    }
+    //FE gọi sau mỗi khi executeOrder được gọi
+    function UpdateRankDishes()external{
+        uint256 dishCount = dishesWithOrder.length;
+        for(uint i; i< dishCount; i++){
+            uint rank = i;
+            RankReport memory rankReport = RankReport({
+                createdAt: block.timestamp,
+                rank:rank
+            });
+            mDishCodeToRankReport[allDishCodes[i]].push(rankReport);
+        }
+
+    }
+    function GetRanksCreatedTimes(
+        string memory dishCode,
+        uint from,
+        uint to
+    ) external view returns (RankReport[] memory times, uint totalCount) {
+        RankReport[] storage allTimes = mDishCodeToRankReport[dishCode];
+        totalCount = allTimes.length;
+        
+        if(from > totalCount){return (new RankReport[](0),totalCount);}
+        if (to > totalCount) {
+            to = totalCount;
+        }
+        require(from <= to, "Invalid range");
+        
+        uint resultLength = to - from;
+        times = new RankReport[](resultLength);
+        
+        for (uint i = 0; i < resultLength; i++) {
+            times[i] = allTimes[from + i];
+        }
+        
+        return (times, totalCount);
     }
     function UpdateTopDish() public  {
         uint dishCount = allDishCodes.length;

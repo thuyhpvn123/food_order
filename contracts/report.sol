@@ -83,7 +83,9 @@ contract RestaurantReporting is
     Target[] public revenueTargets;
     mapping(uint => uint) public yearlyOrders;
     mapping(uint => uint) public yearlyRevenues;
+    mapping(string =>uint[]) public orderCreatedTimes; //discode to order createdTimes
 
+    // RankReport[] public rankReport;
     uint256[48] private __gap;
 
     constructor() {
@@ -143,14 +145,42 @@ contract RestaurantReporting is
     //hàm này chưa được gọi
     function UpdateDishDailyData(
         string memory dishCode,
-        uint date,
+        uint createdAt,
         uint revenue,
         uint orders
     ) external {
+        orderCreatedTimes[dishCode].push(createdAt);
+        uint date = _getDay(createdAt);
         dishDailyRevenue[dishCode][date] += revenue;
         dishDailyOrders[dishCode][date] += orders;
     }
-    function UpdateDishStats(string memory dishCode, uint revenue, uint orders) external {
+    function GetOrderCreatedTimes(
+        string memory dishCode,
+        uint from,
+        uint to
+    ) external view returns (uint[] memory) {
+        uint[] storage allTimes = orderCreatedTimes[dishCode];
+        uint totalLength = allTimes.length;
+        
+        // Validate pagination parameters
+        if(from > totalLength){ return new uint[](0);}
+        if (to > totalLength) {
+            to = totalLength;
+        }
+        require(from <= to, "Invalid range");
+        
+        // Calculate result array size
+        uint resultLength = to - from;
+        uint[] memory result = new uint[](resultLength);
+        
+        // Copy data from storage to memory
+        for (uint i = 0; i < resultLength; i++) {
+            result[i] = allTimes[from + i];
+        }
+        
+        return result;
+    }    
+function UpdateDishStats(string memory dishCode, uint revenue, uint orders) external {
         dishTotalRevenue[dishCode] += revenue;
         dishTotalOrders[dishCode] += orders;
     }

@@ -3,13 +3,16 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "./interfaces/IRestaurant.sol";
 import "./interfaces/IManagement.sol";
 import "./lib/DateTimeTZ.sol";
+// import "forge-std/console.sol";
 
 contract RestaurantReporting is 
     Initializable, 
     AccessControlUpgradeable,
+    OwnableUpgradeable, 
     UUPSUpgradeable    
 {
     bytes32 public ROLE_ADMIN;
@@ -93,6 +96,7 @@ contract RestaurantReporting is
     }
 
     function initialize(address _management) public initializer {
+        __Ownable_init(msg.sender);
         __AccessControl_init();
         __UUPSUpgradeable_init();
         
@@ -105,7 +109,7 @@ contract RestaurantReporting is
         MANAGEMENT = IManagement(_management);
     }
     
-    function _authorizeUpgrade(address newImplementation) internal override {}
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
     function setManangement(address _management) external onlyRole(ROLE_ADMIN) {
         MANAGEMENT = IManagement(_management);
     }
@@ -595,12 +599,12 @@ function UpdateDishStats(string memory dishCode, uint revenue, uint orders) exte
 
     // Functions to get favorite dishes with more details
     function Get5FavoriteDishesByDay(uint256 dayOrMonth,bool isDay) external view returns (FavoriteDish[] memory favoriteDishes) {
-        (DishWithFirstPrice[] memory topDishCodes,uint total) = MANAGEMENT.Get5TopDishesByTime(dayOrMonth,isDay);
+        (DishWithFirstPrice[] memory topDishCodes,) = MANAGEMENT.Get5TopDishesByTime(dayOrMonth,isDay);
         favoriteDishes = new FavoriteDish[](topDishCodes.length);
         
         for (uint i = 0; i < topDishCodes.length; i++) {
             string memory dishCode = topDishCodes[i].dish.code;
-            Dish memory dish = MANAGEMENT.GetDish(dishCode);
+            // Dish memory dish = MANAGEMENT.GetDish(dishCode);
             (uint revenue, uint orders, ) = MANAGEMENT.GetDishStats(dishCode);
             
             favoriteDishes[i] = FavoriteDish({

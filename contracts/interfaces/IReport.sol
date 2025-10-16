@@ -12,4 +12,5 @@ interface IRestaurantReporting {
         uint revenue,
         uint orders
      ) external ;
+     
 }

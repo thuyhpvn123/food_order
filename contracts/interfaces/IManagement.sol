@@ -109,6 +109,7 @@ interface IManagement {
         uint256 totalCount
     );
     function UpdateTotalRevenueReport(uint createdAt, uint addRevenue) external ;
+    function hasRole(bytes32 role, address account) external view returns (bool);
 }
 interface ICardTokenManager {
     function getPoolInfo(string memory _transactionID) external view returns(PoolInfo memory);

@@ -126,6 +126,7 @@ struct Table {
     TABLE_STATUS status;
     bytes32 paymentId;
     bool active;
+    string name;
 }
 
 struct Course {

@@ -38,7 +38,12 @@ pragma solidity ^0.8.19;
  *    - **Đánh dấu đã đọc**: `markRead(eventId)`, `markAllRead(beforeTime)`.
  *    - **Xóa thông báo**: `deleteNoti(eventId)`.
  */
-import "@openzeppelin/contracts/access/Ownable.sol";
+// import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+
+
 import "./interfaces/INoti.sol";
 // import "forge-std/console.sol";
 contract PermissionManager {
@@ -95,7 +100,12 @@ contract PermissionManager {
  * @notice Trung tâm tiếp nhận tất cả thông báo từ các Dapp.
  * @dev Chỉ nhận thông báo từ các NotiStorage hợp lệ do NotiFactory đăng ký.
  */
-contract NotiHub is Ownable{
+contract NotiHub is     
+    Initializable, 
+    OwnableUpgradeable, 
+    UUPSUpgradeable  
+
+{
     mapping(address => bool) public allowedNotiStorages; // Danh sách các NotiStorage hợp lệ
     address public notiFactory; // Địa chỉ NotiFactory
     address public admin;
@@ -107,6 +117,11 @@ contract NotiHub is Ownable{
         string message,
         uint256 createdAt
     );
+    uint256[44] private __gap;
+
+    constructor() {
+        _disableInitializers();
+    }
 
     modifier onlyAllowedNotiStorage() {
         require(allowedNotiStorages[msg.sender], "Not authorized-NotiHub");
@@ -122,13 +137,12 @@ contract NotiHub is Ownable{
         _;
     }
 
-
-    // constructor(address _notiFactory) {
-    //     notiFactory = _notiFactory;
-    // }
-    constructor(address _admin)Ownable(msg.sender){
+    function initialize(address _admin) public initializer {
+        __Ownable_init(msg.sender);
+        __UUPSUpgradeable_init();
         admin = _admin;
-    }
+    }    
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
     function setNotiFactory(address _notiFactory)external onlyAdmin{
         notiFactory =  _notiFactory;
@@ -243,7 +257,13 @@ contract NotiStorage {
     }
 }
 
-contract NotiFactory is Ownable {
+
+contract NotiFactory is 
+    Initializable, 
+    OwnableUpgradeable, 
+    UUPSUpgradeable  
+
+{
     struct DappContracts {
         address permissionManager;
         address notiStorage;
@@ -291,26 +311,33 @@ contract NotiFactory is Ownable {
     address[] public dappList;
     DappInfo[] public dappInfoList;
     NotiHub public notiHub; // Tham chiếu đến NotiHub
-    address public admin;
+    // address public admin;
+    mapping(address => bool) public isAdmin;
+
+    uint256[44] private __gap;
     event DappRegistered(address indexed dappOwner, address permissionManager, address notiStorage);
     // event UserSubscribed(address indexed user, address indexed dapp, address permissionManager);
     event NotificationScheduled(address user , address[] apps, uint256[] scheduledTimes,  uint8 platform);
     event DeleteNotificationScheduledTimes(address user, uint256[] scheduledTimes, uint8 platform);
     event DeleteNotificationScheduledApps(address user , address[] scheduledApps, uint8 platform);
 
-
-    // constructor(address _notiHub) {
-    //     notiHub = NotiHub(_notiHub);
-    // }
-    constructor() Ownable(msg.sender){
-        admin = 0x5B38Da6a701c568545dCfcB03FcB875f56beddC4;
+    constructor() {
+        _disableInitializers();
     }
-    // constructor() Ownable(msg.sender){
-    // }
 
     modifier onlyAdmin() { 
-        require(msg.sender == admin,"Only Admin");
+        require(isAdmin[msg.sender],"Only Admin");
         _;
+    }
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+
+    function initialize() public initializer {
+        __Ownable_init(0xdf182ed5CF7D29F072C429edd8BFCf9C4151394B);
+        __UUPSUpgradeable_init();
+        isAdmin[0xdf182ed5CF7D29F072C429edd8BFCf9C4151394B] = true;
+    }    
+    function setAdmin(address _admin, bool _acceptted) external onlyAdmin {
+        isAdmin[_admin] = _acceptted;
     }
     function setNotiHub(address _notiHub) external onlyAdmin {
         notiHub = NotiHub(_notiHub);
@@ -319,7 +346,7 @@ contract NotiFactory is Ownable {
      * @notice Đăng ký Dapp với hệ thống thông báo
      * @dev Chỉ cần gọi 1 lần duy nhất, sẽ triển khai PermissionManager & NotiStorage
      */
-    function registerDapp(address service, string memory nameDapp) external onlyAdmin {
+    function registerDapp(address service, string memory nameDapp) external onlyAdmin returns(address,address) {
         require(dappToContracts[service].permissionManager == address(0), "Dapp already registered");
 
         PermissionManager permissionManager = new PermissionManager(address(this));
@@ -336,6 +363,7 @@ contract NotiFactory is Ownable {
         notiHub.registerNotiStorage(address(notiStorage));
 
         emit DappRegistered(service, address(permissionManager), address(notiStorage));
+        return (address(notiStorage),address(permissionManager));
     }
     function unregisterDapp(address service) external onlyAdmin {
         for(uint256 i; i< dappList.length; i++){

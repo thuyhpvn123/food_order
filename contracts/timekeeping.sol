@@ -10,7 +10,7 @@ import "./interfaces/IRestaurant.sol";
 import "./interfaces/IManagement.sol";
 import "./interfaces/ITimeKeeping.sol";
 import "./lib/DateTimeTZ.sol";
-
+// import "forge-std/console.sol";
 contract AttendanceSystem is 
     Initializable,
     OwnableUpgradeable, 
@@ -24,7 +24,7 @@ contract AttendanceSystem is
     IManagement public managementContract;
   
     // Storage
-    mapping(address => mapping(uint256 => AttendanceRecord)) public staffDailyAttendance; // staff => date => record
+    mapping(address => mapping(uint256 =>AttendanceRecord[])) public staffDailyAttendance; // staff => date => record
     mapping(uint256 => DailyReportHR) public dailyReports; // date => report
     mapping(uint256 => MonthlyReportHR) public monthlyReports; // month => report
     mapping(address => bool) public isStaffExists;
@@ -286,7 +286,7 @@ contract AttendanceSystem is
         
         return result;
     }    
-function checkIn(
+    function checkIn(
         address _staff,
         WorkPlaceAttendance memory _workPlace
     ) external onlyBEOrRole(_staff) nonReentrant {
@@ -332,7 +332,7 @@ function checkIn(
         );
         
         Staff memory staff = managementContract.GetStaffInfo(_staff);
-        AttendanceRecord storage record = staffDailyAttendance[_staff][_yyyymmdd];
+        AttendanceRecord memory record;
         
         record.staffWallet = _staff;
         record.staffCode = staff.code;
@@ -354,7 +354,8 @@ function checkIn(
         
         totalAttendanceRecords++;
         mLatestCheckinShift[_staff][_yyyymmdd] = shift.shiftId;
-        
+        staffDailyAttendance[_staff][_yyyymmdd].push(record);
+
         // Add staff to tracking if not already added
         _addStaffToTrackingInternal(_staff);
         isAttendanceRecorded[_staff][_yyyymmdd] = true;
@@ -362,7 +363,6 @@ function checkIn(
         emit AttendanceStatusUpdated(_staff, _yyyymmdd, record.status, record.isLate, record.isHalfDay);
         
         // Auto-update daily report
-        // _updateDailyReport(_yyyymmdd);
          _updateDailyReportOptimizedWithMonthly(_yyyymmdd, _staff);
     }
     
@@ -397,7 +397,8 @@ function checkIn(
             '{"from": "Timekeeping.sol","msg": "Invalid checkout. Please check in before checking out."}'
         );
 
-        AttendanceRecord storage record = staffDailyAttendance[_staff][_yyyymmdd];
+        uint length = staffDailyAttendance[_staff][_yyyymmdd].length;
+        AttendanceRecord storage record = staffDailyAttendance[_staff][_yyyymmdd][length-1];
         
         // Validate workplace consistency
         require(
@@ -446,7 +447,8 @@ function checkIn(
         );
         uint256 currentTime = block.timestamp;
         
-        AttendanceRecord storage record = staffDailyAttendance[staff][_yyyymmdd];
+        uint length = staffDailyAttendance[staff][_yyyymmdd].length;
+        AttendanceRecord storage record = staffDailyAttendance[staff][_yyyymmdd][length-1];
         require(record.checkInTime > 0, "Must check in first");
         
         // Add new not in position record
@@ -466,7 +468,8 @@ function checkIn(
         );
         uint256 currentTime = block.timestamp;
         
-        AttendanceRecord storage record = staffDailyAttendance[staff][_yyyymmdd];
+        uint length = staffDailyAttendance[staff][_yyyymmdd].length;
+        AttendanceRecord storage record = staffDailyAttendance[staff][_yyyymmdd][length-1];
         require(record.notInPositionRecords.length > 0, "No not in position record found");
         
         // Find the latest unclosed not in position record
@@ -487,21 +490,13 @@ function checkIn(
         // _updateDailyReport(_yyyymmdd);
          _updateDailyReportOptimizedWithMonthly(_yyyymmdd, staff);
     }
-    struct AttendanceDataInput {
-        address _staff;
-        uint256 _date;
-        AttendanceStatus _status;
-        ABSENT_TYPE _absentType;
-        string  _notes;
-        address approver;
-    }
     // Updated BE Data Input Functions for ABSENT status
     function setAttendanceData(
         // address _staff,
         // uint256 _date,
         // AttendanceStatus _status,
         // ABSENT_TYPE _absentType,
-        // string memory _notes,
+        // string memory _notes,    
         // address approver
         AttendanceDataInput memory input
     ) internal {
@@ -513,7 +508,7 @@ function checkIn(
         }
         
         Staff memory staff = managementContract.GetStaffInfo(input._staff);
-        AttendanceRecord storage record = staffDailyAttendance[input._staff][input._date];
+        AttendanceRecord memory record ;
         
         record.staffWallet = input._staff;
         record.staffCode = staff.code;
@@ -529,7 +524,8 @@ function checkIn(
         record.approvedAt = block.timestamp;
         record.isLate = false; // Default for manual entries
         record.isHalfDay = false; // Default for manual entries
-        
+        staffDailyAttendance[input._staff][input._date].push(record);
+
         // // Add staff to tracking if not already added
         // _addStaffToTrackingInternal(input._staff);
         
@@ -551,8 +547,8 @@ function checkIn(
         // Rebuild từ đầu
         for (uint256 i = 0; i < allStaffAddresses.length; i++) {
             address staff = allStaffAddresses[i];
-            if (staffDailyAttendance[staff][_date].date > 0 || 
-                staffDailyAttendance[staff][_date].staffWallet != address(0)) {
+            if (staffDailyAttendance[staff][_date][0].date > 0 || 
+                staffDailyAttendance[staff][_date][0].staffWallet != address(0)) {
                 _updateDailyReportOptimizedWithMonthly(_date, staff);
             }
         }
@@ -583,30 +579,30 @@ function checkIn(
     }
         
     // Updated View Functions - Individual Staff Daily Report
-    function getStaffDailyReport(address _staff, uint256 _date) external view returns (StaffDailyReport memory) {
-        AttendanceRecord memory record = staffDailyAttendance[_staff][_date];
+    function getStaffDailyReport(address _staff, uint256 _date) external view returns (AttendanceRecord[] memory records) {
+       records = staffDailyAttendance[_staff][_date];
         
-        return StaffDailyReport({
-            staffWallet: _staff,
-            staffCode: record.staffCode,
-            staffName: record.staffName,
-            date: _date,
-            checkInTime: record.checkInTime,
-            checkOutTime: record.checkOutTime,
-            lateMinutes: record.lateMinutes,
-            isLate: record.isLate,
-            isHalfDay: record.isHalfDay,
-            totalWorkingHours: record.totalWorkingHours,
-            totalNotInPositionTime: record.totalNotInPositionTime,
-            totalNotInPositionCount: record.totalNotInPositionCount,
-            notInPositionRecords: record.notInPositionRecords,
-            status: record.status,
-            absentType: record.absentType,
-            notes: record.notes
-        });
+        // return StaffDailyReport({
+        //     staffWallet: _staff,
+        //     staffCode: record.staffCode,
+        //     staffName: record.staffName,
+        //     date: _date,
+        //     checkInTime: record.checkInTime,
+        //     checkOutTime: record.checkOutTime,
+        //     lateMinutes: record.lateMinutes,
+        //     isLate: record.isLate,
+        //     isHalfDay: record.isHalfDay,
+        //     totalWorkingHours: record.totalWorkingHours,
+        //     totalNotInPositionTime: record.totalNotInPositionTime,
+        //     totalNotInPositionCount: record.totalNotInPositionCount,
+        //     notInPositionRecords: record.notInPositionRecords,
+        //     status: record.status,
+        //     absentType: record.absentType,
+        //     notes: record.notes
+        // });
     }
     
-    function getAttendanceRecord(address _staff, uint256 _date) external view returns (AttendanceRecord memory) {
+    function getAttendanceRecord(address _staff, uint256 _date) external view returns (AttendanceRecord[] memory) {
         return staffDailyAttendance[_staff][_date];
     }
     
@@ -638,39 +634,43 @@ function checkIn(
         return monthlyReports[_month].staffStats[_staff].lateDayArr;
     }
     
-    function getNotInPositionRecords(address _staff, uint256 _date) external view returns (NotInPositionRecord[] memory) {
-        return staffDailyAttendance[_staff][_date].notInPositionRecords;
-    }
+    // function getNotInPositionRecords(address _staff, uint256 _date) external view returns (NotInPositionRecord[] memory) {
+    //     return staffDailyAttendance[_staff][_date].notInPositionRecords;
+    // }
     
     function getMonthlyReportStaffList(uint256 _month) external view returns (address[] memory) {
         return monthlyReports[_month].staffList;
     }
     
-    function getStaffDayDetailsAMonth(address _staff, uint256 _month) external view returns (StaffDayDetail[] memory) {
+    function getStaffDayDetailsAMonth(address _staff, uint256 _month) external view returns (StaffDayDetail[][] memory) {
         uint256 year = _month / 100;
         uint256 monthNum = _month % 100;
         uint256 daysInMonth = _getDaysInMonth(year, monthNum);
         
-        StaffDayDetail[] memory details = new StaffDayDetail[](daysInMonth);
+        StaffDayDetail[][] memory details = new StaffDayDetail[][](daysInMonth);
         
         for (uint256 day = 1; day <= daysInMonth; day++) {
             uint256 date = _month * 100 + day;
-            AttendanceRecord memory record = staffDailyAttendance[_staff][date];
+            AttendanceRecord[] memory record = staffDailyAttendance[_staff][date];
+            for(uint i; i<record.length; i++){
+                StaffDayDetail[] memory detailInADay = new StaffDayDetail[](record.length);
+                detailInADay[i] = StaffDayDetail({
+                    date: date,
+                    status: record[i].status,
+                    absentType: record[i].absentType,
+                    isLate: record[i].isLate,
+                    isHalfDay: record[i].isHalfDay,
+                    checkInTime: record[i].checkInTime,
+                    checkOutTime: record[i].checkOutTime,
+                    totalWorkingHours: record[i].totalWorkingHours,
+                    notInPositionCount: record[i].totalNotInPositionCount,
+                    totalNotInPositionTime: record[i].totalNotInPositionTime,
+                    notes: record[i].notes,
+                    lateMinutes: record[i].lateMinutes
+                });
+                details[day - 1][i]= detailInADay[i];
+            }
             
-            details[day - 1] = StaffDayDetail({
-                date: date,
-                status: record.status,
-                absentType: record.absentType,
-                isLate: record.isLate,
-                isHalfDay: record.isHalfDay,
-                checkInTime: record.checkInTime,
-                checkOutTime: record.checkOutTime,
-                totalWorkingHours: record.totalWorkingHours,
-                notInPositionCount: record.totalNotInPositionCount,
-                totalNotInPositionTime: record.totalNotInPositionTime,
-                notes: record.notes,
-                lateMinutes: record.lateMinutes
-            });
         }
         
         return details;
@@ -692,160 +692,160 @@ function checkIn(
         ));
     }
     
-    // Updated Company Report Functions
-    /**
-     * @dev Lấy danh sách báo cáo ngày của toàn công ty
-     * @param _date Ngày cần lấy báo cáo (format YYYYMMDD)
-     * @return Mảng CompanyDailySummary chứa thông tin của tất cả nhân viên
-     */
-    function getCompanyDailyReport(uint256 _date) external view returns (CompanyDailySummary[] memory) {
-        address[] memory allStaffs = allStaffAddresses;
+    // // Updated Company Report Functions
+    // /**
+    //  * @dev Lấy danh sách báo cáo ngày của toàn công ty
+    //  * @param _date Ngày cần lấy báo cáo (format YYYYMMDD)
+    //  * @return Mảng CompanyDailySummary chứa thông tin của tất cả nhân viên
+    //  */
+    // function getCompanyDailyReport(uint256 _date) external view returns (CompanyDailySummary[] memory) {
+    //     address[] memory allStaffs = allStaffAddresses;
         
-        CompanyDailySummary[] memory companySummary = new CompanyDailySummary[](allStaffs.length);
+    //     CompanyDailySummary[] memory companySummary = new CompanyDailySummary[](allStaffs.length);
         
-        for (uint256 i = 0; i < allStaffs.length; i++) {
-            Staff memory staff = managementContract.GetStaffInfo(allStaffs[i]);
-            address staffWallet = staff.wallet;
-            AttendanceRecord memory record = staffDailyAttendance[staffWallet][_date];
+    //     for (uint256 i = 0; i < allStaffs.length; i++) {
+    //         Staff memory staff = managementContract.GetStaffInfo(allStaffs[i]);
+    //         address staffWallet = staff.wallet;
+    //         AttendanceRecord memory record = staffDailyAttendance[staffWallet][_date];
             
-            companySummary[i] = CompanyDailySummary({
-                staffName: staff.name,
-                staffCode: staff.code,
-                position: staff.position,
-                workingHours: record.totalWorkingHours,
-                lateCount: record.isLate ? 1 : 0
-            });
-        }
+    //         companySummary[i] = CompanyDailySummary({
+    //             staffName: staff.name,
+    //             staffCode: staff.code,
+    //             position: staff.position,
+    //             workingHours: record.totalWorkingHours,
+    //             lateCount: record.isLate ? 1 : 0
+    //         });
+    //     }
         
-        return companySummary;
-    }
+    //     return companySummary;
+    // }
 
-    /**
-     * @dev Lấy danh sách báo cáo tháng của toàn công ty
-     * @param _month Tháng cần lấy báo cáo (format YYYYMM)
-     * @return Mảng CompanyMonthlySummary chứa thông tin của tất cả nhân viên
-     */
-    function getCompanyMonthlyReport(uint256 _month) external view returns (CompanyMonthlySummary[] memory) {
-        Staff[] memory allStaffs = managementContract.GetAllStaffs();
-        CompanyMonthlySummary[] memory companySummary = new CompanyMonthlySummary[](allStaffs.length);
+    // /**
+    //  * @dev Lấy danh sách báo cáo tháng của toàn công ty
+    //  * @param _month Tháng cần lấy báo cáo (format YYYYMM)
+    //  * @return Mảng CompanyMonthlySummary chứa thông tin của tất cả nhân viên
+    //  */
+    // function getCompanyMonthlyReport(uint256 _month) external view returns (CompanyMonthlySummary[] memory) {
+    //     Staff[] memory allStaffs = managementContract.GetAllStaffs();
+    //     CompanyMonthlySummary[] memory companySummary = new CompanyMonthlySummary[](allStaffs.length);
         
-        // Tính toán số ngày trong tháng và ngày hiện tại
-        uint256 year = _month / 100;
-        uint256 monthNum = _month % 100;
-        uint256 daysInMonth = _getDaysInMonth(year, monthNum);
+    //     // Tính toán số ngày trong tháng và ngày hiện tại
+    //     uint256 year = _month / 100;
+    //     uint256 monthNum = _month % 100;
+    //     uint256 daysInMonth = _getDaysInMonth(year, monthNum);
         
-        // Lấy ngày hiện tại để xác định số ngày đã qua trong tháng
-        uint256 currentDate = _getCurrentDate();
-        uint256 currentYear = currentDate / 10000;
-        uint256 currentMonth = (currentDate / 100) % 100;
-        uint256 currentDay = currentDate % 100;
+    //     // Lấy ngày hiện tại để xác định số ngày đã qua trong tháng
+    //     uint256 currentDate = _getCurrentDate();
+    //     uint256 currentYear = currentDate / 10000;
+    //     uint256 currentMonth = (currentDate / 100) % 100;
+    //     uint256 currentDay = currentDate % 100;
         
-        // Xác định số ngày cần tính (đến ngày hiện tại hoặc hết tháng)
-        uint256 daysToCount = daysInMonth;
-        if (year == currentYear && monthNum == currentMonth) {
-            daysToCount = currentDay;
-        }
+    //     // Xác định số ngày cần tính (đến ngày hiện tại hoặc hết tháng)
+    //     uint256 daysToCount = daysInMonth;
+    //     if (year == currentYear && monthNum == currentMonth) {
+    //         daysToCount = currentDay;
+    //     }
         
-        for (uint256 i = 0; i < allStaffs.length; i++) {
-            address staffWallet = allStaffs[i].wallet;
-            uint256 workingDays = 0;
+    //     for (uint256 i = 0; i < allStaffs.length; i++) {
+    //         address staffWallet = allStaffs[i].wallet;
+    //         uint256 workingDays = 0;
             
-            // Đếm số ngày công từ đầu tháng đến ngày hiện tại
-            for (uint256 day = 1; day <= daysToCount; day++) {
-                uint256 date = _month * 100 + day;
-                AttendanceRecord memory record = staffDailyAttendance[staffWallet][date];
+    //         // Đếm số ngày công từ đầu tháng đến ngày hiện tại
+    //         for (uint256 day = 1; day <= daysToCount; day++) {
+    //             uint256 date = _month * 100 + day;
+    //             AttendanceRecord memory record = staffDailyAttendance[staffWallet][date];
                 
-                // Chỉ tính các ngày có status PRESENT
-                if (record.date > 0 && record.status == AttendanceStatus.PRESENT) {
-                    workingDays++;
-                }
-            }
+    //             // Chỉ tính các ngày có status PRESENT
+    //             if (record.date > 0 && record.status == AttendanceStatus.PRESENT) {
+    //                 workingDays++;
+    //             }
+    //         }
             
-            companySummary[i] = CompanyMonthlySummary({
-                staffName: allStaffs[i].name,
-                staffCode: allStaffs[i].code,
-                position: allStaffs[i].position,
-                workingDays: workingDays
-            });
-        }
+    //         companySummary[i] = CompanyMonthlySummary({
+    //             staffName: allStaffs[i].name,
+    //             staffCode: allStaffs[i].code,
+    //             position: allStaffs[i].position,
+    //             workingDays: workingDays
+    //         });
+    //     }
         
-        return companySummary;
-    }
+    //     return companySummary;
+    // }
 
-    /**
-     * @dev Lấy danh sách báo cáo tháng với filter theo chức vụ
-     * @param _month Tháng cần lấy báo cáo (format YYYYMM)
-     * @param _position Chức vụ cần filter (để trống nếu muốn lấy tất cả)
-     * @return Mảng CompanyMonthlySummary chứa thông tin của nhân viên theo chức vụ
-     */
-    function getCompanyMonthlyReportByPosition(
-        uint256 _month, 
-        string memory _position
-    ) external view returns (CompanyMonthlySummary[] memory) {
-        address[] memory allStaffs = allStaffAddresses;
+    // /**
+    //  * @dev Lấy danh sách báo cáo tháng với filter theo chức vụ
+    //  * @param _month Tháng cần lấy báo cáo (format YYYYMM)
+    //  * @param _position Chức vụ cần filter (để trống nếu muốn lấy tất cả)
+    //  * @return Mảng CompanyMonthlySummary chứa thông tin của nhân viên theo chức vụ
+    //  */
+    // function getCompanyMonthlyReportByPosition(
+    //     uint256 _month, 
+    //     string memory _position
+    // ) external view returns (CompanyMonthlySummary[] memory) {
+    //     address[] memory allStaffs = allStaffAddresses;
         
-        // Đếm số nhân viên phù hợp với filter
-        uint256 matchingCount = 0;
-        for (uint256 i = 0; i < allStaffs.length; i++) {
-            Staff memory staff = managementContract.GetStaffInfo(allStaffs[i]);
-            if (bytes(_position).length == 0 ||              
-                Strings.equal(staff.position, _position)) {
-                matchingCount++;
-            }
-        }
+    //     // Đếm số nhân viên phù hợp với filter
+    //     uint256 matchingCount = 0;
+    //     for (uint256 i = 0; i < allStaffs.length; i++) {
+    //         Staff memory staff = managementContract.GetStaffInfo(allStaffs[i]);
+    //         if (bytes(_position).length == 0 ||              
+    //             Strings.equal(staff.position, _position)) {
+    //             matchingCount++;
+    //         }
+    //     }
         
-        CompanyMonthlySummary[] memory companySummary = new CompanyMonthlySummary[](matchingCount);
+    //     CompanyMonthlySummary[] memory companySummary = new CompanyMonthlySummary[](matchingCount);
         
-        // Tính toán số ngày trong tháng và ngày hiện tại
-        uint256 year = _month / 100;
-        uint256 monthNum = _month % 100;
-        uint256 daysInMonth = _getDaysInMonth(year, monthNum);
+    //     // Tính toán số ngày trong tháng và ngày hiện tại
+    //     uint256 year = _month / 100;
+    //     uint256 monthNum = _month % 100;
+    //     uint256 daysInMonth = _getDaysInMonth(year, monthNum);
         
-        uint256 currentDate = _getCurrentDate();
-        uint256 currentYear = currentDate / 10000;
-        uint256 currentMonth = (currentDate / 100) % 100;
-        uint256 currentDay = currentDate % 100;
+    //     uint256 currentDate = _getCurrentDate();
+    //     uint256 currentYear = currentDate / 10000;
+    //     uint256 currentMonth = (currentDate / 100) % 100;
+    //     uint256 currentDay = currentDate % 100;
         
-        uint256 daysToCount = daysInMonth;
-        if (year == currentYear && monthNum == currentMonth) {
-            daysToCount = currentDay;
-        }
+    //     uint256 daysToCount = daysInMonth;
+    //     if (year == currentYear && monthNum == currentMonth) {
+    //         daysToCount = currentDay;
+    //     }
         
-        uint256 summaryIndex = 0;
-        for (uint256 i = 0; i < allStaffs.length; i++) {
-            Staff memory staff = managementContract.GetStaffInfo(allStaffs[i]);
-            // Filter theo chức vụ
-            if (bytes(_position).length > 0 && 
-                !Strings.equal(staff.position, _position)) {
-                continue;
-            }
+    //     uint256 summaryIndex = 0;
+    //     for (uint256 i = 0; i < allStaffs.length; i++) {
+    //         Staff memory staff = managementContract.GetStaffInfo(allStaffs[i]);
+    //         // Filter theo chức vụ
+    //         if (bytes(_position).length > 0 && 
+    //             !Strings.equal(staff.position, _position)) {
+    //             continue;
+    //         }
             
-            address staffWallet = staff.wallet;
-            uint256 workingDays = 0;
+    //         address staffWallet = staff.wallet;
+    //         uint256 workingDays = 0;
             
-            // Đếm số ngày công
-            for (uint256 day = 1; day <= daysToCount; day++) {
-                uint256 date = _month * 100 + day;
-                AttendanceRecord memory record = staffDailyAttendance[staffWallet][date];
+    //         // Đếm số ngày công
+    //         for (uint256 day = 1; day <= daysToCount; day++) {
+    //             uint256 date = _month * 100 + day;
+    //             AttendanceRecord memory record = staffDailyAttendance[staffWallet][date];
                 
-                // Chỉ tính các ngày có status PRESENT
-                if (record.date > 0 && record.status == AttendanceStatus.PRESENT) {
-                    workingDays++;
-                }
-            }
+    //             // Chỉ tính các ngày có status PRESENT
+    //             if (record.date > 0 && record.status == AttendanceStatus.PRESENT) {
+    //                 workingDays++;
+    //             }
+    //         }
             
-            companySummary[summaryIndex] = CompanyMonthlySummary({
-                staffName: staff.name,
-                staffCode: staff.code,
-                position: staff.position,
-                workingDays: workingDays
-            });
+    //         companySummary[summaryIndex] = CompanyMonthlySummary({
+    //             staffName: staff.name,
+    //             staffCode: staff.code,
+    //             position: staff.position,
+    //             workingDays: workingDays
+    //         });
             
-            summaryIndex++;
-        }
+    //         summaryIndex++;
+    //     }
         
-        return companySummary;
-    }
+    //     return companySummary;
+    // }
     
     // Admin Functions
     function _addStaffToTrackingInternal(address _staffWallet) internal {
@@ -935,88 +935,92 @@ function checkIn(
             report.unrecordedStaff++;
             return;
         }
-        AttendanceRecord memory record = staffDailyAttendance[_staff][_date];
+        AttendanceRecord[] memory records = staffDailyAttendance[_staff][_date];
         Staff memory staff = managementContract.GetStaffInfo(_staff);
-        bool found = false;
-        for (uint256 i = 0; i < report.staffList.length; i++) {
-            if (report.staffList[i].staffWallet == _staff) {
-                found = true;
-                // Trừ đi số liệu cũ trước khi cập nhật
-                if (report.staffList[i].status == AttendanceStatus.PRESENT) {
-                    report.presentStaff--;
-                    report.totalWorkingHours -= report.staffList[i].workingHours;
-                    if (report.staffList[i].lateCount > 0) {
-                        report.lateStaff--;
-                        report.totalLateMinutes -= report.staffList[i].lateMinutes;
+        for(uint i; i<records.length;i++){
+            AttendanceRecord memory record = records[i];
+            bool found = false;
+            for (uint256 i = 0; i < report.staffList.length; i++) {
+                if (report.staffList[i].staffWallet == _staff) {
+                    found = true;
+                    // Trừ đi số liệu cũ trước khi cập nhật
+                    if (report.staffList[i].status == AttendanceStatus.PRESENT) {
+                        report.presentStaff--;
+                        report.totalWorkingHours -= report.staffList[i].workingHours;
+                        if (report.staffList[i].lateCount > 0) {
+                            report.lateStaff--;
+                            report.totalLateMinutes -= report.staffList[i].lateMinutes;
+                        }
+                        if (report.staffList[i].isHalfDay) {
+                            report.halfDayStaff--;
+                        }
+                    } else if (report.staffList[i].status == AttendanceStatus.ABSENT) {
+                        report.absentStaff--;
+                        if (report.staffList[i].absentType == ABSENT_TYPE.VACATION) {
+                            report.vacationStaff--;
+                        } else if (report.staffList[i].absentType == ABSENT_TYPE.UNAUTHORIZED) {
+                            report.unauthorizedStaff--;
+                        }
                     }
-                    if (report.staffList[i].isHalfDay) {
-                        report.halfDayStaff--;
-                    }
-                } else if (report.staffList[i].status == AttendanceStatus.ABSENT) {
-                    report.absentStaff--;
-                    if (report.staffList[i].absentType == ABSENT_TYPE.VACATION) {
-                        report.vacationStaff--;
-                    } else if (report.staffList[i].absentType == ABSENT_TYPE.UNAUTHORIZED) {
-                        report.unauthorizedStaff--;
-                    }
-                }
 
-                // 👉 Cập nhật lại staffList[i] với dữ liệu mới
-                report.staffList[i] = DailyStaffSummary({
+                    // 👉 Cập nhật lại staffList[i] với dữ liệu mới
+                    report.staffList[i] = DailyStaffSummary({
+                        staffWallet: _staff,
+                        staffCode: staff.code,
+                        staffName: staff.name,
+                        workingHours: record.totalWorkingHours,
+                        lateCount: record.isLate ? 1 : 0,
+                        lateMinutes: record.lateMinutes,
+                        isHalfDay: record.isHalfDay,
+                        checkInTime: record.checkInTime,
+                        checkOutTime: record.checkOutTime,
+                        status: record.status,
+                        absentType: record.absentType
+                    });
+
+                    break;
+                }
+            }
+        
+            // Cập nhật staff list nếu chưa có
+            if (!found) {
+                report.staffList.push(DailyStaffSummary({
                     staffWallet: _staff,
                     staffCode: staff.code,
                     staffName: staff.name,
                     workingHours: record.totalWorkingHours,
                     lateCount: record.isLate ? 1 : 0,
-                    lateMinutes: record.lateMinutes,
                     isHalfDay: record.isHalfDay,
                     checkInTime: record.checkInTime,
                     checkOutTime: record.checkOutTime,
                     status: record.status,
-                    absentType: record.absentType
-                });
+                    absentType: record.absentType,
+                    lateMinutes: record.lateMinutes
+                }));
+                report.totalStaff++;
+            }
+            // Nếu staff chưa có record => absent unauthorized
+            if (record.status == AttendanceStatus.PRESENT) {
+                report.presentStaff++;
+                if (record.isLate) {
+                    report.lateStaff++;
+                    report.totalLateMinutes += record.lateMinutes;
+                }
+                if (record.isHalfDay) {
+                    report.halfDayStaff++;
+                }
+                report.totalWorkingHours += record.totalWorkingHours;
+                report.totalNotInPositionCount += record.totalNotInPositionCount;
+            } 
+            else if (record.status == AttendanceStatus.ABSENT) {
+                report.absentStaff++;
+                if (record.absentType == ABSENT_TYPE.VACATION) {
+                    report.vacationStaff++;
+                } else {
+                    report.unauthorizedStaff++;
+                }
+            }
 
-                break;
-            }
-        }
-    
-        // Cập nhật staff list nếu chưa có
-        if (!found) {
-            report.staffList.push(DailyStaffSummary({
-                staffWallet: _staff,
-                staffCode: staff.code,
-                staffName: staff.name,
-                workingHours: record.totalWorkingHours,
-                lateCount: record.isLate ? 1 : 0,
-                isHalfDay: record.isHalfDay,
-                checkInTime: record.checkInTime,
-                checkOutTime: record.checkOutTime,
-                status: record.status,
-                absentType: record.absentType,
-                lateMinutes: record.lateMinutes
-            }));
-            report.totalStaff++;
-        }
-        // Nếu staff chưa có record => absent unauthorized
-        if (record.status == AttendanceStatus.PRESENT) {
-            report.presentStaff++;
-            if (record.isLate) {
-                report.lateStaff++;
-                report.totalLateMinutes += record.lateMinutes;
-            }
-            if (record.isHalfDay) {
-                report.halfDayStaff++;
-            }
-            report.totalWorkingHours += record.totalWorkingHours;
-            report.totalNotInPositionCount += record.totalNotInPositionCount;
-        } 
-        else if (record.status == AttendanceStatus.ABSENT) {
-            report.absentStaff++;
-            if (record.absentType == ABSENT_TYPE.VACATION) {
-                report.vacationStaff++;
-            } else {
-                report.unauthorizedStaff++;
-            }
         }
     }
         
@@ -1067,47 +1071,53 @@ function checkIn(
         // Duyệt qua các ngày để tính toán
         for (uint256 day = 1; day <= daysToCount; day++) {
             uint256 date = _month * 100 + day;
-            AttendanceRecord memory record = staffDailyAttendance[_staff][date];
-            bool hasRecord = (record.date > 0 || record.staffWallet != address(0));
-            if (!hasRecord) {
-                // Staff chưa có record -> đếm riêng
-                if((_isWorkingDay(date))){
-                    // Không có record = vắng không phép
-                    tempUnauthorizedDays[unauthorizedCount] = date;
-                    unauthorizedCount++;
-                    unauthorizedDays++;
-                }
-            } else {
-                if (record.status == AttendanceStatus.PRESENT) {
-                    tempWorkingDays[workingCount] = date;
-                    workingCount++;
-                    presentDays++;
-                    
-                    if (record.isLate) {
-                        tempLateDays[lateDayCount] = date;
-                        lateDayCount++;
-                        lateDays++;
-                    }
-                    
-                    if (record.isHalfDay) {
-                        tempHalfDays[halfDayCount] = date;
-                        halfDayCount++;
-                        halfDays++;
-                    }
-                    
-                    totalWorkingHours += record.totalWorkingHours;
-                    totalNotInPositionCount += record.totalNotInPositionCount;
-                    totalNotInPositionTime += record.totalNotInPositionTime;
-                    
-                } else if (record.status == AttendanceStatus.ABSENT) {
-                    if (record.absentType == ABSENT_TYPE.VACATION) {
-                        tempVacationDays[vacationCount] = date;
-                        vacationCount++;
-                        vacationDays++;
-                    } else if (record.absentType == ABSENT_TYPE.UNAUTHORIZED) {
+            // console.log("date:",date);
+            AttendanceRecord[] memory records = staffDailyAttendance[_staff][date];
+            // console.log("records.length:",records.length);
+            for(uint i; i<records.length;i++){
+                
+                AttendanceRecord memory record = records[i];
+                bool hasRecord = (record.date > 0 || record.staffWallet != address(0));
+                if (!hasRecord) {
+                    // Staff chưa có record -> đếm riêng
+                    if((_isWorkingDay(date))){
+                        // Không có record = vắng không phép
                         tempUnauthorizedDays[unauthorizedCount] = date;
                         unauthorizedCount++;
                         unauthorizedDays++;
+                    }
+                } else {
+                    if (record.status == AttendanceStatus.PRESENT) {
+                        tempWorkingDays[workingCount] = date;
+                        workingCount++;
+                        presentDays++;
+                        
+                        if (record.isLate) {
+                            tempLateDays[lateDayCount] = date;
+                            lateDayCount++;
+                            lateDays++;
+                        }
+                        
+                        if (record.isHalfDay) {
+                            tempHalfDays[halfDayCount] = date;
+                            halfDayCount++;
+                            halfDays++;
+                        }
+                        
+                        totalWorkingHours += record.totalWorkingHours;
+                        totalNotInPositionCount += record.totalNotInPositionCount;
+                        totalNotInPositionTime += record.totalNotInPositionTime;
+                        
+                    } else if (record.status == AttendanceStatus.ABSENT) {
+                        if (record.absentType == ABSENT_TYPE.VACATION) {
+                            tempVacationDays[vacationCount] = date;
+                            vacationCount++;
+                            vacationDays++;
+                        } else if (record.absentType == ABSENT_TYPE.UNAUTHORIZED) {
+                            tempUnauthorizedDays[unauthorizedCount] = date;
+                            unauthorizedCount++;
+                            unauthorizedDays++;
+                        }
                     }
                 }
             }
@@ -1236,7 +1246,7 @@ function checkIn(
         }
     }
     // Helper function để count working days in month
-    function _countWorkingDaysInMonth(uint256 _month, uint256 daysToCount) internal view returns (uint256) {
+    function _countWorkingDaysInMonth(uint256 _month, uint256 daysToCount) internal pure returns (uint256) {
         uint256 workingDays = 0;
         
         for (uint256 day = 1; day <= daysToCount; day++) {
@@ -1343,41 +1353,44 @@ function checkIn(
         // Loop through all days in month
         for (uint256 day = 1; day <= daysToCount; day++) {
             uint256 date = _month * 100 + day;
-            AttendanceRecord memory record = staffDailyAttendance[_staff][date];
-            bool hasRecord = (record.date > 0 || record.staffWallet != address(0));
+            AttendanceRecord[] memory records = staffDailyAttendance[_staff][date];
+            for(uint i; i<records.length;i++){
+                AttendanceRecord memory record = records[i];
+                bool hasRecord = (record.date > 0 || record.staffWallet != address(0));
             
-            if (!hasRecord) {
-                // No record = unauthorized absence if it's a working day
-                if (_isWorkingDay(date)) {
-                    stats.absentUnauthorizedDayArr.push(date);
-                    stats.unauthorizedDays++;
-                }
-            } else {
-                if (record.status == AttendanceStatus.PRESENT) {
-                    stats.workingDayArr.push(date);
-                    stats.presentDays++;
-                    
-                    if (record.isLate) {
-                        stats.lateDayArr.push(date);
-                        stats.lateDays++;
-                    }
-                    
-                    if (record.isHalfDay) {
-                        stats.halfDayArr.push(date);
-                        stats.halfDays++;
-                    }
-                    
-                    stats.totalWorkingHours += record.totalWorkingHours;
-                    stats.totalNotInPositionCount += record.totalNotInPositionCount;
-                    stats.totalNotInPositionTime += record.totalNotInPositionTime;
-                    
-                } else if (record.status == AttendanceStatus.ABSENT) {
-                    if (record.absentType == ABSENT_TYPE.VACATION) {
-                        stats.absentVacationDayArr.push(date);
-                        stats.vacationDays++;
-                    } else if (record.absentType == ABSENT_TYPE.UNAUTHORIZED) {
+                if (!hasRecord) {
+                    // No record = unauthorized absence if it's a working day
+                    if (_isWorkingDay(date)) {
                         stats.absentUnauthorizedDayArr.push(date);
                         stats.unauthorizedDays++;
+                    }
+                } else {
+                    if (record.status == AttendanceStatus.PRESENT) {
+                        stats.workingDayArr.push(date);
+                        stats.presentDays++;
+                        
+                        if (record.isLate) {
+                            stats.lateDayArr.push(date);
+                            stats.lateDays++;
+                        }
+                        
+                        if (record.isHalfDay) {
+                            stats.halfDayArr.push(date);
+                            stats.halfDays++;
+                        }
+                        
+                        stats.totalWorkingHours += record.totalWorkingHours;
+                        stats.totalNotInPositionCount += record.totalNotInPositionCount;
+                        stats.totalNotInPositionTime += record.totalNotInPositionTime;
+                        
+                    } else if (record.status == AttendanceStatus.ABSENT) {
+                        if (record.absentType == ABSENT_TYPE.VACATION) {
+                            stats.absentVacationDayArr.push(date);
+                            stats.vacationDays++;
+                        } else if (record.absentType == ABSENT_TYPE.UNAUTHORIZED) {
+                            stats.absentUnauthorizedDayArr.push(date);
+                            stats.unauthorizedDays++;
+                        }
                     }
                 }
             }
@@ -1393,6 +1406,7 @@ function checkIn(
             stats.punctualityRate = ((stats.presentDays - stats.lateDays) * 100) / stats.presentDays;
         }
     }
+
 
     // Update the existing _updateDailyReportOptimized function to also update monthly reports
     function _updateDailyReportOptimizedWithMonthly(uint256 _date, address _staff) internal {

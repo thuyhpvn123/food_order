@@ -226,6 +226,14 @@ struct CompanyMonthlySummary {
     string position;        // Chức vụ
     uint256 workingDays;    // Số ngày công trong tháng tính đến thời điểm gọi
 }
+struct AttendanceDataInput {
+    address _staff;
+    uint256 _date;
+    AttendanceStatus _status;
+    ABSENT_TYPE _absentType;
+    string  _notes;
+    address approver;
+}
 
 interface ITimeKeeping {
     function getWorkPlaceById(uint _workPlaceId) external view returns (WorkPlace memory) ;

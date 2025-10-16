@@ -10,6 +10,8 @@ import "./interfaces/IManagement.sol";
 import "./interfaces/INoti.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 import "./interfaces/IReport.sol";
+// import "forge-std/console.sol";
+
 // import "./interfaces/IRestaurant.sol";
 contract RestaurantOrder is 
     Initializable, 
@@ -56,7 +58,7 @@ contract RestaurantOrder is
     mapping(string => mapping(bytes32 => uint)) mDishReviewIndex; 
     IRestaurantReporting public Report;
     mapping(uint256 => Review[]) private reviewsByDate; // date => Review[]
-    // mapping(bytes32 =>mapping(uint => uint)) public mOrderIdToCoursePrice; //orderId => courseId => coursePrice
+    mapping(uint =>mapping(uint => uint)) public mTableToCoursePrice; //table => courseId => coursePrice
 
     // Events
     event OrderMade(uint indexed table, bytes32 indexed orderId, uint courseCount);
@@ -265,7 +267,7 @@ contract RestaurantOrder is
         mTableToCourses[table].push(course);
         mTableToIdToCourse[table][course.id] = course ;
         coursePrice = dishPrice * quantity;
-        mOrderIdToCoursePrice[orderId][course.id] = coursePrice;
+        mTableToCoursePrice[table][course.id] = coursePrice;
     }
 
     function _createOrUpdatePayment(
@@ -401,6 +403,7 @@ contract RestaurantOrder is
         // }
         emit CallStaff(table,amount);
     }
+    event BatchCourseStatusUpdated(uint table,bytes32 _orderId,COURSE_STATUS newStatus);
 
     function BatchUpdateCourseStatus(
         uint table,
@@ -414,7 +417,9 @@ contract RestaurantOrder is
             }
             _updateCourseStatus(table,_orderId,courses[i].id,newStatus);
         }
+        emit BatchCourseStatusUpdated(table,_orderId,newStatus);
     }
+    event CourseStatusUpdated(uint table,bytes32 _orderId,uint _courseId,COURSE_STATUS newStatus);
 
     function updateCourseStatus(
         uint table,
@@ -456,6 +461,15 @@ contract RestaurantOrder is
                 break;
             }
         }
+        Payment memory payment = mTableToPayment[table];
+        SimpleCourse[] storage coursesPayment = paymentCourses[payment.id] ;
+        for(uint i; i < coursesPayment.length; i++){
+            if (_courseId == coursesPayment[i].id){
+                coursesPayment[i].status = newStatus;
+                break;
+            }        
+        }
+        emit CourseStatusUpdated(table,_orderId,_courseId,newStatus);
     }
 
     function _clearTable(uint table) internal {
@@ -519,39 +533,37 @@ contract RestaurantOrder is
         // Mark transaction as used
         usedTxIds[txID] = true;
         
-        // paymentCourses[payment.id] = mTableToCourses[table];
         paymentHistory.push(payment);
-        //update orderNum of Dish for getTop
-        for (uint i = 0; i < mTableToCourses[table].length; i++) {
-            SimpleCourse memory course = mTableToCourses[table][i];
-            MANAGEMENT.UpdateOrderNum(course.dishCode,course.quantity,block.timestamp);
-            Report.UpdateDishDailyData(course.dishCode,block.timestamp,dishPrice,1); //1 là 1 order
-        }
-        MANAGEMENT.UpdateTotalRevenueReport(block.timestamp,payment.foodCharge); //FE gọi sau 
+        //update orderNum of Dish for getTop 
+        //FE gọi sau vì goi cùng sẽ bị lỗi out of gas
+        // for (uint i = 0; i < mTableToCourses[table].length; i++) {
+        //     SimpleCourse memory course = mTableToCourses[table][i];
+        //     MANAGEMENT.UpdateOrderNum(course.dishCode,course.quantity,block.timestamp);
+        //     uint dishPrice = mTableToCoursePrice[table][course.id];
+        //     Report.UpdateDishDailyData(course.dishCode,block.timestamp,dishPrice,1); //1 là 1 order
+        // }
+        // MANAGEMENT.UpdateTotalRevenueReport(block.timestamp,payment.foodCharge-payment.discountAmount); //FE gọi sau để không bị out of gas
+        //  MANAGEMENT.SortDishesWithOrderRange //FE gọi sau để không bị out of gas
+        //  MANAGEMENT.UpdateRankDishes //FE gọi sau để không bị out of gas
         emit PaymentMade(table, payment.id, payment.total);
         return true;
+    }
+    function UpdateForReport(uint table) external {
+        for (uint i = 0; i < mTableToCourses[table].length; i++) {
+            SimpleCourse memory course = mTableToCourses[table][i];
+            if(course.quantity>0){
+                MANAGEMENT.UpdateOrderNum(course.dishCode,course.quantity,block.timestamp);
+                uint dishPrice = mTableToCoursePrice[table][course.id];
+                Report.UpdateDishDailyData(course.dishCode,block.timestamp,dishPrice,1); //1 là 1 order
+
+            }
+        }
+
     }
     function getPaymentCourses(bytes32 _paymentID) external view returns(SimpleCourse[] memory courses, Payment memory payment){
         return (paymentCourses[_paymentID],mIdToPayment[_paymentID]);
     }
 
-    // Set call data for VISA payment (if needed)
-    mapping(bytes32 => bytes) public callData;
-    
-    function setCallData(
-        uint table,
-        string memory discountCode,
-        uint tip
-    ) external returns (bytes32 callDataId) {
-        bytes memory data = abi.encode(table, discountCode, tip);
-        callDataId = keccak256(abi.encodePacked(msg.sender, block.timestamp));
-        callData[callDataId] = data;
-        return callDataId;
-    }
-    
-    function getCallData(bytes32 callDataId) external view returns (bytes memory) {
-        return callData[callDataId];
-    }
 
     // Review function
     function makeReview(

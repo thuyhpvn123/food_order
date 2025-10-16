@@ -4,11 +4,16 @@ import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol"
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "./interfaces/IReport.sol";
 import "./interfaces/IRestaurant.sol";
 import "./interfaces/ITimeKeeping.sol";
-contract Management is 
+// import "forge-std/console.sol";
+
+contract Management is    
+   
     Initializable, 
+    OwnableUpgradeable, 
     AccessControlUpgradeable,
     UUPSUpgradeable    
 {
@@ -45,6 +50,7 @@ contract Management is
     // uint256 public productID;
     string[] public allDishCodes;
     mapping(string => uint) public dishCodeIndex;  
+    
     mapping(string => bool) public dishIsNew;
     mapping(string => uint) public dishTotalRevenue;
     mapping(string => uint) public dishTotalOrders;
@@ -85,7 +91,7 @@ contract Management is
     mapping(uint =>string[]) public mDayToDishCodeOrder;
     address public report;
     mapping(string =>RankReport[]) public mDishCodeToRankReport;
-
+    mapping(string => uint) public dishOrderIndex;
     // Reserve storage for upgradeability
     uint256[10] private __gap;
 
@@ -114,6 +120,7 @@ contract Management is
     function _authorizeUpgrade(address newImplementation) internal override {}
 
     function initialize() public initializer {
+        __Ownable_init(msg.sender);
         __AccessControl_init();
         __UUPSUpgradeable_init();
 
@@ -196,7 +203,7 @@ contract Management is
         require(bytes(mPosition[staff.position].name).length > 0, "position not found");
         require(staff.roles.length > 0, "staff roles is empty");
         // Kiểm tra tất cả roles của staff có nằm trong roles được phép của position
-        _validateStaffRoles(staff.position, staff.roles);
+        // _validateStaffRoles(staff.position, staff.roles);
 
         mAddToStaff[staff.wallet] = staff;
         staffs.push(staff);
@@ -355,6 +362,9 @@ contract Management is
     }
     function GetStaffInfo(address _wallet)external view onlyAdminAndRole(STAFF_ROLE.STAFF_MANAGE) returns(Staff memory){
         return mAddToStaff[_wallet];
+    }
+    function GetStaff()external view returns(Staff memory){
+        return mAddToStaff[msg.sender];
     }
 
     function GetStaffsPagination(uint256 offset, uint256 limit)
@@ -572,7 +582,8 @@ contract Management is
     function CreateTable(
         uint _number,
         uint _numPeople,
-        bool _active
+        bool _active,
+        string memory _name
     )external onlyAdminAndRole(STAFF_ROLE.TABLE_MANAGE){
         require(_number != 0,"Table number can not be 0");
         require(mNumberToTable[_number].number == 0,"this number existed");
@@ -581,7 +592,8 @@ contract Management is
             numPeople: _numPeople,
             status: TABLE_STATUS.EMPTY,
             paymentId: bytes32(0),
-            active: _active
+            active: _active,
+            name: _name
         });
         mNumberToTable[_number] = table;
         tables.push(table);
@@ -600,12 +612,14 @@ contract Management is
     function UpdateTable(
         uint _number,
         uint _numPeople,
-        bool _active
+        bool _active,
+        string memory _name
     )external onlyAdminAndRole(STAFF_ROLE.TABLE_MANAGE) returns(bool){
         require(_number != 0,"Table number can not be 0");
         require(mNumberToTable[_number].number != 0,"this number table does not exist");
         mNumberToTable[_number].numPeople = _numPeople;
         mNumberToTable[_number].active = _active;
+        mNumberToTable[_number].name = _name;
         for(uint i;i<tables.length;i++){
             if(keccak256(abi.encodePacked(tables[i].number ))== keccak256(abi.encodePacked(_number))){
                 tables[i] = mNumberToTable[_number];
@@ -777,10 +791,30 @@ contract Management is
         dishStartTime[dish.code] = block.timestamp;
         dishIsNew[dish.code] = true;
         
-        // Add to allDishCodes if not exists
-        if (dishCodeIndex[dish.code] == 0 && (allDishCodes.length == 0 || keccak256(abi.encodePacked(allDishCodes[0])) != keccak256(abi.encodePacked(dish.code)))) {
-            allDishCodes.push(dish.code);
-            dishCodeIndex[dish.code] = allDishCodes.length - 1;
+            // dishesWithOrder.push(dish.code);
+        if (dishCodeIndex[dish.code] == 0) {
+            bool isFirstDish = allDishCodes.length == 0;
+            bool isExisting = !isFirstDish && 
+                keccak256(abi.encodePacked(allDishCodes[0])) == keccak256(abi.encodePacked(dish.code));
+            
+            if (!isExisting) {
+                allDishCodes.push(dish.code);
+                dishCodeIndex[dish.code] = allDishCodes.length; // ✅ LƯU INDEX + 1 = 1, 2, 3...
+                //
+                bytes32 variantId0 = mDishVariant[dish.code][0];
+                DishWithOrder memory dishWithOrder = DishWithOrder({
+                    dish: mCodeToDish[dish.code],
+                    orderNum: 0,
+                    originalIndex: 0,
+                    variant: mVariant[dish.code][variantId0],
+                    attributes: mVariantAttributes[dish.code][variantId0]
+                });
+                dishesWithOrder.push(dishWithOrder);
+                dishOrderIndex[dish.code] = dishesWithOrder.length; // index + 1
+                // console.log("create dish-------");
+                // console.log("dish.code:",dish.code);
+                // console.log("index:",dishesWithOrder.length);
+            }
         }
     }
     // Purpose: This function prevent 1 product have same attributes
@@ -986,85 +1020,139 @@ contract Management is
             dishesWithOrder.push(tempDishes[i]);
         }
     }
-    function UpdateTopDishLimited(uint256 topN) public {
-        uint256 dishCount = allDishCodes.length;
-        uint256 resultSize = dishCount < topN ? dishCount : topN;
+    // //FE cần gọi hàm này sau mỗi khi gọi executeOrder
+    // function UpdateTopDishLimited(uint256 topN) public {
+    //     uint256 dishCount = allDishCodes.length;
+    //     uint256 resultSize = dishCount < topN ? dishCount : topN;
         
-        delete dishesWithOrder;
+    //     delete dishesWithOrder;
         
-        // Chỉ lưu top N items
-        DishWithOrder[] memory tempDishes = new DishWithOrder[](resultSize);
-        uint256 minOrderNum = 0;
-        uint256 minIndex = 0;
+    //     // Chỉ lưu top N items
+    //     DishWithOrder[] memory tempDishes = new DishWithOrder[](resultSize);
+    //     uint256 minOrderNum = 0;
+    //     uint256 minIndex = 0;
         
-        for (uint256 i = 0; i < dishCount; i++) {
-            string memory dishCode = allDishCodes[i];
-            uint256 currentOrderNum = mCodeToDish[dishCode].orderNum;
+    //     for (uint256 i = 0; i < dishCount; i++) {
+    //         string memory dishCode = allDishCodes[i];
+    //         uint256 currentOrderNum = mCodeToDish[dishCode].orderNum;
             
-            if (i < resultSize) {
-                // Fill initial array
-                bytes32 variantId = mDishVariant[dishCode][0];
-                tempDishes[i] = DishWithOrder({
-                    dish: mCodeToDish[dishCode],
-                    orderNum: currentOrderNum,
-                    originalIndex: i,
-                    variant: mVariant[dishCode][variantId],
-                    attributes: mVariantAttributes[dishCode][variantId]
-                });
+    //         if (i < resultSize) {
+    //             // Fill initial array
+    //             bytes32 variantId = mDishVariant[dishCode][0];
+    //             tempDishes[i] = DishWithOrder({
+    //                 dish: mCodeToDish[dishCode],
+    //                 orderNum: currentOrderNum,
+    //                 originalIndex: i,
+    //                 variant: mVariant[dishCode][variantId],
+    //                 attributes: mVariantAttributes[dishCode][variantId]
+    //             });
                 
-                // Track minimum
-                if (currentOrderNum < minOrderNum || i == 0) {
-                    minOrderNum = currentOrderNum;
-                    minIndex = i;
-                }
-            } else if (currentOrderNum > minOrderNum) {
-                // Replace minimum with current item
-                bytes32 variantId = mDishVariant[dishCode][0];
-                tempDishes[minIndex] = DishWithOrder({
-                    dish: mCodeToDish[dishCode],
-                    orderNum: currentOrderNum,
-                    originalIndex: i,
-                    variant: mVariant[dishCode][variantId],
-                    attributes: mVariantAttributes[dishCode][variantId]
-                });
+    //             // Track minimum
+    //             if (currentOrderNum < minOrderNum || i == 0) {
+    //                 minOrderNum = currentOrderNum;
+    //                 minIndex = i;
+    //             }
+    //         } else if (currentOrderNum > minOrderNum) {
+    //             // Replace minimum with current item
+    //             bytes32 variantId = mDishVariant[dishCode][0];
+    //             tempDishes[minIndex] = DishWithOrder({
+    //                 dish: mCodeToDish[dishCode],
+    //                 orderNum: currentOrderNum,
+    //                 originalIndex: i,
+    //                 variant: mVariant[dishCode][variantId],
+    //                 attributes: mVariantAttributes[dishCode][variantId]
+    //             });
                 
-                // Find new minimum
-                minOrderNum = currentOrderNum;
-                for (uint256 j = 0; j < resultSize; j++) {
-                    if (tempDishes[j].orderNum < minOrderNum) {
-                        minOrderNum = tempDishes[j].orderNum;
-                        minIndex = j;
-                    }
-                }
-            }
+    //             // Find new minimum
+    //             minOrderNum = currentOrderNum;
+    //             for (uint256 j = 0; j < resultSize; j++) {
+    //                 if (tempDishes[j].orderNum < minOrderNum) {
+    //                     minOrderNum = tempDishes[j].orderNum;
+    //                     minIndex = j;
+    //                 }
+    //             }
+    //         }
+    //     }
+        
+    //     // Sort final result
+    //     _optimizedInsertionSort(tempDishes, resultSize);
+        
+    //     // Write to storage once
+    //     for (uint256 i = 0; i < resultSize; i++) {
+    //         dishesWithOrder.push(tempDishes[i]);
+    //     }
+    // }
+    // function _optimizedInsertionSort(DishWithOrder[] memory arr, uint256 length) internal pure {
+    //     for (uint256 i = 1; i < length; i++) {
+    //         DishWithOrder memory key = arr[i];
+    //         uint256 orderNum = key.orderNum;
+            
+    //         uint256 j = i;
+    //         // Tối ưu: so sánh orderNum trước khi di chuyển struct
+    //         while (j > 0 && arr[j - 1].orderNum < orderNum) {
+    //             arr[j] = arr[j - 1];
+    //             j--;
+    //         }
+            
+    //         if (j != i) {
+    //             arr[j] = key;
+    //         }
+    //     }
+    // }
+    //FE cần gọi hàm này sau mỗi khi gọi executeOrder
+function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
+    uint256 length = dishesWithOrder.length;
+    require(from < length, "Start index out of bounds");
+    
+    uint256 endIndex = from + topN;
+    if (endIndex > length) {
+        endIndex = length;
+    }
+    
+    uint256 rangeSize = endIndex - from;
+    
+    // Copy range to memory
+    DishWithOrder[] memory tempRange = new DishWithOrder[](rangeSize);
+    for (uint256 i = 0; i < rangeSize; i++) {
+        tempRange[i] = dishesWithOrder[from + i];
+    }
+    
+    // Sort in memory (cần so sánh với các phần tử đã sort trước đó)
+    for (uint256 i = 0; i < rangeSize; i++) {
+        DishWithOrder memory key = tempRange[i];
+        uint256 keyOrderNum = key.orderNum;
+        
+        // Tìm vị trí chèn từ đầu mảng (bao gồm cả phần đã sort)
+        uint256 insertPos = from + i;
+        
+        // So sánh ngược lại để tìm vị trí đúng
+        while (insertPos > 0 && dishesWithOrder[insertPos - 1].orderNum < keyOrderNum) {
+            insertPos--;
         }
         
-        // Sort final result
-        _optimizedInsertionSort(tempDishes, resultSize);
-        
-        // Write to storage once
-        for (uint256 i = 0; i < resultSize; i++) {
-            dishesWithOrder.push(tempDishes[i]);
+        // Nếu cần di chuyển
+        if (insertPos < from + i) {
+            // Shift các phần tử
+            for (uint256 j = from + i; j > insertPos; j--) {
+                dishesWithOrder[j] = dishesWithOrder[j - 1];
+            }
+            dishesWithOrder[insertPos] = key;
+            string memory dishCode = dishesWithOrder[insertPos].dish.code;
+            dishOrderIndex[dishCode] = insertPos;
+        } else {
+            dishesWithOrder[from + i] = key;
+            string memory dishCode = dishesWithOrder[insertPos].dish.code;
+            dishOrderIndex[dishCode] = from + i;
         }
     }
-    function _optimizedInsertionSort(DishWithOrder[] memory arr, uint256 length) internal pure {
-        for (uint256 i = 1; i < length; i++) {
-            DishWithOrder memory key = arr[i];
-            uint256 orderNum = key.orderNum;
-            
-            uint256 j = i;
-            // Tối ưu: so sánh orderNum trước khi di chuyển struct
-            while (j > 0 && arr[j - 1].orderNum < orderNum) {
-                arr[j] = arr[j - 1];
-                j--;
-            }
-            
-            if (j != i) {
-                arr[j] = key;
-            }
-        }
-    }
-    //FE gọi sau mỗi khi executeOrder được gọi
+            // console.log("dishesWithOrder[0].dish.code:",dishesWithOrder[0].dish.code);
+            // console.log("dishesWithOrder[0].dish.orderNum:",dishesWithOrder[0].orderNum);
+            // console.log("dishesWithOrder[1].dish.code:",dishesWithOrder[1].dish.code);
+            // console.log("dishesWithOrder[1].dish.orderNum:",dishesWithOrder[1].orderNum);
+            // console.log("dishesWithOrder[2].dish.code:",dishesWithOrder[2].dish.code);
+            // console.log("dishesWithOrder[2].dish.orderNum:",dishesWithOrder[2].orderNum);
+
+}    //FE gọi sau mỗi khi executeOrder được gọi
     function UpdateRankDishes()external{
         uint256 dishCount = dishesWithOrder.length;
         for(uint i; i< dishCount; i++){
@@ -1084,22 +1172,30 @@ contract Management is
     ) external view returns (RankReport[] memory times, uint totalCount) {
         RankReport[] storage allTimes = mDishCodeToRankReport[dishCode];
         totalCount = allTimes.length;
-        
-        if(from > totalCount){return (new RankReport[](0),totalCount);}
-        if (to > totalCount) {
-            to = totalCount;
+
+        // Đếm số phần tử thỏa timestamp
+        uint count = 0;
+        for (uint i = 0; i < totalCount; i++) {
+            if (allTimes[i].createdAt >= from && allTimes[i].createdAt <= to) {
+                count++;
+            }
         }
-        require(from <= to, "Invalid range");
-        
-        uint resultLength = to - from;
-        times = new RankReport[](resultLength);
-        
-        for (uint i = 0; i < resultLength; i++) {
-            times[i] = allTimes[from + i];
+
+        // Tạo mảng memory với đúng kích thước
+        times = new RankReport[](count);
+
+        // Copy dữ liệu thỏa timestamp
+        uint j = 0;
+        for (uint i = 0; i < totalCount; i++) {
+            if (allTimes[i].createdAt >= from && allTimes[i].createdAt <= to) {
+                times[j] = allTimes[i];
+                j++;
+            }
         }
-        
+
         return (times, totalCount);
     }
+
     function UpdateTopDish() public  {
         uint dishCount = allDishCodes.length;
         
@@ -1251,9 +1347,9 @@ contract Management is
         return allDishCodes;
     }
     function GetTopDishesWithLimit(uint offset, uint limit) external returns (DishWithFirstPrice[] memory, uint totalCount) {
-        if (dishesWithOrder.length == 0){
-            UpdateTopDishLimited(50);
-        }
+        // if (dishesWithOrder.length == 0){
+        //     UpdateTopDishLimited(50);
+        // }
         uint dishCount = allDishCodes.length;
         totalCount = dishCount;
         
@@ -1462,10 +1558,15 @@ contract Management is
         }
         if(mDayToDishCode[month][_codeDish] != true){
             mMonthToDishCodeOrder[month].push(_codeDish);
-            mMonthToDishCode[day][_codeDish] = true;
+            mMonthToDishCode[month][_codeDish] = true;
         }
+        uint index = dishOrderIndex[_codeDish];
+        // console.log("_codeDish:",_codeDish);
+        // console.log("index:",index);
+        dishesWithOrder[index -1].orderNum += orderNumAdd;
     }
-    function UpdateTotalRevenueReport(uint createdAt, uint addRevenue) external onlyOrder(){
+    //FE cần gọi sau khi gọi executeOrder
+    function UpdateTotalRevenueReport(uint createdAt, uint addRevenue) external {
         totalRevenueDays.push(ChartTotalRevenue({
             time:createdAt,
             totalRevenue: addRevenue
@@ -1698,16 +1799,36 @@ contract Management is
         delete dishStartTime[_dishCode];
         delete dishIsNew[_dishCode];
 
-        // Xoá khỏi allDishCodes
-        uint256 index = dishCodeIndex[_dishCode];
-        if (allDishCodes.length > 0 && index < allDishCodes.length) {
-            string memory lastCode = allDishCodes[allDishCodes.length - 1];
+        // Xoá khỏi allDishCodes  
+        uint256 indexPlusOne = dishCodeIndex[_dishCode];
+        
+        uint256 index = indexPlusOne - 1;
+        uint256 lastIndex = allDishCodes.length - 1;
+        
+        if (index != lastIndex) {
+            // Swap with last element
+            string memory lastCode = allDishCodes[lastIndex];
             allDishCodes[index] = lastCode;
-            dishCodeIndex[lastCode] = index;
-            allDishCodes.pop();
+            dishCodeIndex[lastCode] = indexPlusOne;
         }
+        
+        allDishCodes.pop();
         delete dishCodeIndex[_dishCode];
-
+        //xóa khỏi dishesWithOrder
+         uint256 orderIndexPlusOne = dishOrderIndex[_dishCode];
+        if (orderIndexPlusOne > 0) {
+            uint256 orderIndex = orderIndexPlusOne - 1;
+            uint256 orderLastIndex = dishesWithOrder.length - 1;
+            
+            if (orderIndex != orderLastIndex) {
+                DishWithOrder memory lastDishWithOrder = dishesWithOrder[orderLastIndex];
+                dishesWithOrder[orderIndex] = lastDishWithOrder;
+                dishOrderIndex[lastDishWithOrder.dish.code] = orderIndexPlusOne;
+            }
+            
+            dishesWithOrder.pop();
+            delete dishOrderIndex[_dishCode];
+        }
         emit DishRemoved(_dishCode, _codeCategory);
     }
 

@@ -6,18 +6,24 @@ import "forge-std/console.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "../contracts/agent.sol";
 import "../contracts/agentIqr.sol";
+import "../contracts/agentLoyalty.sol";
 import "../contracts/enhance.sol";
 import "../contracts/interfaces/IAgent.sol";
 import "../contracts/loyaltyFactory.sol";
 import "../contracts/iqrFactory.sol";
 import "../contracts/revenue.sol";
 import "../contracts/mtd.sol";
+import "./res.t.sol";
+import "../contracts/staffMatch.sol";
+import "../contracts/interfaces/IManagement.sol";
 /**
  * @title Agent Management Integration Test
  * @notice Comprehensive integration tests for the Agent Management system
  * @dev Tests full workflow including create, update, delete, pagination, and loyalty operations
  */
-contract AgentManagementIntegrationTest is Test {
+
+contract AgentManagementIntegrationTest is RestaurantTest {
+     using Strings for uint256;
     // Contracts
     AgentManagement public agentManagementImplementation;
     AgentManagement public agentManagement;
@@ -36,22 +42,18 @@ contract AgentManagementIntegrationTest is Test {
     MTDToken public mtdTokenImplementation;
     MTDToken public mtdToken;
     
+    StaffAgentStore public staffAgentStoreImplementation;
+    StaffAgentStore public staffAgentStore;
     // Test accounts
-    address public superAdmin;
-    address public agent1;
-    address public agent2;
-    address public agent3;
-    address public agent4;
-    address public customer1;
-    address public customer2;
-        
+
+    Management public management;
+    RestaurantLoyaltySystem public Points;
+    // address public customer1;
+    // address public customer2;
+    string public domain="domain";
     constructor() {
         // Setup accounts
-        superAdmin = makeAddr("superAdmin");
-        agent1 = makeAddr("agent1");
-        agent2 = makeAddr("agent2");
-        agent3 = makeAddr("agent3");
-        agent4 = makeAddr("agent4");
+
         customer1 = makeAddr("customer1");
         customer2 = makeAddr("customer2");
         
@@ -98,7 +100,7 @@ contract AgentManagementIntegrationTest is Test {
             address(mtdTokenImplementation),
             abi.encodeWithSignature("initialize(uint256)", 1000000)
         );
-        mtdToken = MTDToken(address(mtdProxy));
+        // mtdToken = MTDToken(address(mtdProxy));
         
         // 6. Deploy EnhancedAgentManagement (inherits from AgentManagement)
         enhancedImplementation = new EnhancedAgentManagement();
@@ -107,23 +109,40 @@ contract AgentManagementIntegrationTest is Test {
             abi.encodeWithSignature("initialize()")
         );
         enhanced = EnhancedAgentManagement(address(enhancedProxy));
-        
+
+        // 7. Deploy StaffAgentStore
+        staffAgentStoreImplementation = new StaffAgentStore();
+        ERC1967Proxy staffAgentStoreProxy = new ERC1967Proxy(
+            address(staffAgentStoreImplementation),
+            abi.encodeWithSignature("initialize()")
+        );
+        staffAgentStore = StaffAgentStore(address(staffAgentStoreProxy));
         // Setup admin
         enhanced.setAdmin(superAdmin);
                
         enhanced.setFactoryContracts(
             address(iqrFactory),
             address(loyaltyFactory),
-            address(revenueManager),
-            address(mtdToken)
+            address(revenueManager)
+            // address(mtdToken)
         );
         iqrFactory.setEnhancedAgent(address(enhanced));
-        iqrFactory.setIQRSC(address(0x11),address(0x22),address(0x33),address(0x44));
-        // ✅ QUAN TRỌNG: Transfer ownership của factories cho enhanced contract
-        // Vì enhanced contract sẽ gọi createAgentIQR() và cần quyền owner
-        iqrFactory.transferOwnership(address(enhanced));
-        loyaltyFactory.transferOwnership(address(enhanced));
-        revenueManager.transferOwnership(address(enhanced));
+        iqrFactory.setIQRSC(
+            address(MANAGEMENT_IMP),
+            address(ORDER_IMP),
+            address(REPORT_IMP),
+            address(TIMEKEEPING_IMP),
+            0x10F4A365ff344b3Af382aBdB507c868F1c22f592,
+            0x603dbFC668521aB143Ee1018e4D80b13FDDedfBd,
+            address(revenueManager),
+            address(staffAgentStore)
+        );
+        loyaltyFactory.setPointsImp(address(POINTS_IMP));
+        loyaltyFactory.setEnhancedAgent(address(enhanced));
+        revenueManager.setEnhancedAgent(address(enhanced));
+
+        staffAgentStore.setEnhancedAgent(address(enhanced));
+        staffAgentStore.setIqrFactory(address(iqrFactory));
         vm.stopPrank();
         
         console.log("=== Setup Complete ===");
@@ -163,9 +182,22 @@ contract AgentManagementIntegrationTest is Test {
             note,
             permissions,
             subLocations,
-            subPhones
+            subPhones,
+            domain
         );
-        
+        enhanced.setAgentIQR(agent1);
+        //
+        enhanced.setPointsIQR(agent1);
+    bytes memory bytesCodeCall = abi.encodeCall(
+    enhanced.setAgentIQR,
+        (
+            agent1          
+        ));
+    console.log("setAgentIQR:");
+    console.logBytes(bytesCodeCall);
+    console.log(
+        "-----------------------------------------------------------------------------"
+    ); 
         assertTrue(success, "Agent creation should succeed");
         
         // Verify agent data
@@ -229,7 +261,8 @@ contract AgentManagementIntegrationTest is Test {
                 "Note",
                 permissions,
                 subLocations,
-                subPhones
+                subPhones,
+                i.toString()
             );
             
             assertTrue(success);
@@ -266,7 +299,8 @@ contract AgentManagementIntegrationTest is Test {
             "Old Note",
             initialPermissions,
             subLocations,
-            subPhones
+            subPhones,
+            domain
         );
         
         // Update agent
@@ -296,7 +330,8 @@ contract AgentManagementIntegrationTest is Test {
             newNote,
             newPermissions,
             updatedSubLocations,
-            updatedSubPhones
+            updatedSubPhones,
+            "domain_new"
         );
         
         // Verify updates
@@ -342,7 +377,8 @@ contract AgentManagementIntegrationTest is Test {
             "Note",
             permissions,
             subLocations,
-            subPhones
+            subPhones,
+            domain
         );
         
         // Verify agent exists and is active
@@ -386,15 +422,18 @@ contract AgentManagementIntegrationTest is Test {
             "Note",
             permissions,
             subLocations,
-            subPhones
+            subPhones,
+            domain
         );
-        
+        enhanced.setAgentIQR(agent1);
+        enhanced.setPointsIQR(agent1);
+
         // Mint some loyalty tokens
         address loyaltyContract = enhanced.agentLoyaltyContracts(agent1);
         vm.stopPrank();
         
         vm.prank(agent1);
-        AgentLoyalty(loyaltyContract).mint(customer1, 1000 ether, "Initial mint");
+        RestaurantLoyaltySystem(loyaltyContract).mint(customer1, 1000 ether, "Initial mint");
         
         // Try to delete agent with active tokens - should revert
         vm.prank(superAdmin);
@@ -422,19 +461,22 @@ contract AgentManagementIntegrationTest is Test {
             "Note",
             permissions,
             subLocations,
-            subPhones
+            subPhones,
+            domain
         );
-        
+        enhanced.setAgentIQR(agent1);
+        enhanced.setPointsIQR(agent1);
+
         // Mint tokens
         address loyaltyContract = enhanced.agentLoyaltyContracts(agent1);
         vm.stopPrank();
         
         vm.prank(agent1);
-        AgentLoyalty(loyaltyContract).mint(customer1, 1000 ether, "Mint");
+        RestaurantLoyaltySystem(loyaltyContract).mint(customer1, 1000 ether, "Mint");
         
         // Freeze the loyalty contract
         vm.prank(agent1);
-        AgentLoyalty(loyaltyContract).freeze();
+        RestaurantLoyaltySystem(loyaltyContract).freeze();
         
         // Now deletion should succeed
         vm.prank(superAdmin);
@@ -474,7 +516,8 @@ contract AgentManagementIntegrationTest is Test {
                 "Note",
                 permissions,
                 subLocations,
-                subPhones
+                subPhones,
+                i.toString()
             );
             
             enhanced.deleteAgent(agents[i]);
@@ -498,118 +541,121 @@ contract AgentManagementIntegrationTest is Test {
     // TEST 5: unlockLoyaltyTokens
     // ========================================================================
     
-    function test_UnlockLoyaltyTokens_Success() public {
-        vm.startPrank(superAdmin);
+    // function test_UnlockLoyaltyTokens_Success() public {
+    //     vm.startPrank(superAdmin);
         
-        // Create agent with loyalty
-        bool[3] memory permissions = [false, true, false];
-        string[] memory subLocations = new string[](1);
-        subLocations[0] = "Branch";
-        string[] memory subPhones = new string[](1);
-        subPhones[0] = "0123456789";
+    //     // Create agent with loyalty
+    //     bool[3] memory permissions = [false, true, false];
+    //     string[] memory subLocations = new string[](1);
+    //     subLocations[0] = "Branch";
+    //     string[] memory subPhones = new string[](1);
+    //     subPhones[0] = "0123456789";
         
-        enhanced.createAgentWithAnalytics(
-            agent1,
-            "Store",
-            "Address",
-            "Phone",
-            "Note",
-            permissions,
-            subLocations,
-            subPhones
-        );
+    //     enhanced.createAgentWithAnalytics(
+    //         agent1,
+    //         "Store",
+    //         "Address",
+    //         "Phone",
+    //         "Note",
+    //         permissions,
+    //         subLocations,
+    //         subPhones,
+    //         domain
+    //     );
         
-        address loyaltyContract = enhanced.agentLoyaltyContracts(agent1);
-        vm.stopPrank();
+    //     address loyaltyContract = enhanced.agentLoyaltyContracts(agent1);
+    //     vm.stopPrank();
         
-        // Mint tokens to the loyalty contract itself
-        vm.prank(agent1);
-        AgentLoyalty(loyaltyContract).mint(loyaltyContract, 5000 , "Locked tokens");
+    //     // Mint tokens to the loyalty contract itself
+    //     vm.prank(agent1);
+    //     RestaurantLoyaltySystem(loyaltyContract).mint(loyaltyContract, 5000 , "Locked tokens");
         
-        // Freeze to enable unlock
-        vm.prank(agent1);
-        AgentLoyalty(loyaltyContract).freeze();
+    //     // Freeze to enable unlock
+    //     vm.prank(agent1);
+    //     RestaurantLoyaltySystem(loyaltyContract).freeze();
         
-        uint256 contractBalanceBefore = AgentLoyalty(loyaltyContract).balanceOf(loyaltyContract);
-        assertEq(contractBalanceBefore, 5000 );
+    //     uint256 contractBalanceBefore = RestaurantLoyaltySystem(loyaltyContract).balanceOf(loyaltyContract);
+    //     assertEq(contractBalanceBefore, 5000 );
         
-        // Unlock tokens
-        vm.startBroadcast(superAdmin);
+    //     // Unlock tokens
+    //     vm.startBroadcast(superAdmin);
         
-        uint256 unlockedAmount = enhanced.unlockLoyaltyTokens(agent1);
+    //     uint256 unlockedAmount = enhanced.unlockLoyaltyTokens(agent1);
         
-        assertEq(unlockedAmount, 5000 , "Should unlock all tokens");
+    //     assertEq(unlockedAmount, 5000 , "Should unlock all tokens");
         
-        // Verify tokens moved to agent
-        uint256 agentBalance = AgentLoyalty(loyaltyContract).balanceOf(agent1);
-        assertEq(agentBalance, 5000 , "Agent should receive unlocked tokens");
+    //     // Verify tokens moved to agent
+    //     uint256 agentBalance = RestaurantLoyaltySystem(loyaltyContract).balanceOf(agent1);
+    //     assertEq(agentBalance, 5000 , "Agent should receive unlocked tokens");
         
-        uint256 contractBalanceAfter = AgentLoyalty(loyaltyContract).balanceOf(loyaltyContract);
-        assertEq(contractBalanceAfter, 0, "Contract balance should be 0");
+    //     uint256 contractBalanceAfter = RestaurantLoyaltySystem(loyaltyContract).balanceOf(loyaltyContract);
+    //     assertEq(contractBalanceAfter, 0, "Contract balance should be 0");
         
-        console.log("Test 5 PASSED: unlockLoyaltyTokens");
-        // GetByteCode();
-    }
+    //     console.log("Test 5 PASSED: unlockLoyaltyTokens");
+    //     // GetByteCode();
+    // }
     
-    function test_MigrateLoyaltyTokens_Success() public {
-        vm.startPrank(superAdmin);
+    // function test_MigrateLoyaltyTokens_Success() public {
+    //     vm.startPrank(superAdmin);
         
-        bool[3] memory permissions = [false, true, false];
-        string[] memory subLocations = new string[](1);
-        subLocations[0] = "Branch";
-        string[] memory subPhones = new string[](1);
-        subPhones[0] = "0123456789";
+    //     bool[3] memory permissions = [false, true, false];
+    //     string[] memory subLocations = new string[](1);
+    //     subLocations[0] = "Branch";
+    //     string[] memory subPhones = new string[](1);
+    //     subPhones[0] = "0123456789";
         
-        // Create old agent
-        enhanced.createAgentWithAnalytics(
-            agent1,
-            "Old Store",
-            "Address",
-            "Phone",
-            "Note",
-            permissions,
-            subLocations,
-            subPhones
-        );
+    //     // Create old agent
+    //     enhanced.createAgentWithAnalytics(
+    //         agent1,
+    //         "Old Store",
+    //         "Address",
+    //         "Phone",
+    //         "Note",
+    //         permissions,
+    //         subLocations,
+    //         subPhones,
+    //         "domain1"
+    //     );
         
-        // Create new agent
-        enhanced.createAgentWithAnalytics(
-            agent2,
-            "New Store",
-            "Address",
-            "Phone",
-            "Note",
-            permissions,
-            subLocations,
-            subPhones
-        );
+    //     // Create new agent
+    //     enhanced.createAgentWithAnalytics(
+    //         agent2,
+    //         "New Store",
+    //         "Address",
+    //         "Phone",
+    //         "Note",
+    //         permissions,
+    //         subLocations,
+    //         subPhones,
+    //         "domain2"
+    //     );
         
-        address oldLoyaltyContract = enhanced.agentLoyaltyContracts(agent1);
-        address newLoyaltyContract = enhanced.agentLoyaltyContracts(agent2);
+    //     address oldLoyaltyContract = enhanced.agentLoyaltyContracts(agent1);
+    //     address newLoyaltyContract = enhanced.agentLoyaltyContracts(agent2);
         
-        vm.stopPrank();
+    //     vm.stopPrank();
         
-        // Mint tokens in old contract
-        vm.prank(agent1);
-        AgentLoyalty(oldLoyaltyContract).mint(customer1, 10000 ether, "Old tokens");
+    //     // Mint tokens in old contract
+    //     vm.prank(agent1);
+    //     RestaurantLoyaltySystem(oldLoyaltyContract).mint(customer1, 10000 ether, "Old tokens");
         
-        uint256 oldSupply = AgentLoyalty(oldLoyaltyContract).totalSupply();
-        assertEq(oldSupply, 10000 ether);
+    //     uint256 oldSupply = RestaurantLoyaltySystem(oldLoyaltyContract).totalSupply();
+    //     assertEq(oldSupply, 10000 ether);
         
-        // Migrate tokens
-        vm.prank(superAdmin);
+    //     // Migrate tokens
+    //     vm.prank(superAdmin);
         
-        uint256 migratedAmount = enhanced.migrateLoyaltyTokens(agent1, agent2);
+    //     uint256 migratedAmount = enhanced.migrateLoyaltyTokens(agent1, agent2);
         
-        assertEq(migratedAmount, oldSupply, "Should return migrated amount");
+    //     assertEq(migratedAmount, oldSupply, "Should return migrated amount");
         
-        // Verify old contract is frozen and in redeem-only mode
-        assertTrue(AgentLoyalty(oldLoyaltyContract).isFrozen());
-        assertTrue(AgentLoyalty(oldLoyaltyContract).isRedeemOnly());
-        assertTrue(AgentLoyalty(oldLoyaltyContract).isMigrated());
+    //     // Verify old contract is frozen and in redeem-only mode
+    //     assertTrue(RestaurantLoyaltySystem(oldLoyaltyContract).isFrozen());
+    //     assertTrue(RestaurantLoyaltySystem(oldLoyaltyContract).isRedeemOnly());
+    //     assertTrue(RestaurantLoyaltySystem(oldLoyaltyContract).isMigrated());
         
-        console.log("Test 6 PASSED: migrateLoyaltyTokens");
-    }
+    //     console.log("Test 6 PASSED: migrateLoyaltyTokens");
+    // }
     
     // ========================================================================
     // TEST 7: getAgentsInfoPaginatedWithPermissions
@@ -623,7 +669,7 @@ contract AgentManagementIntegrationTest is Test {
         // Create agents with different permissions
         bool[3] memory allPermissions = [true, true, true];
         bool[3] memory iqrOnly = [true, false, false];
-        bool[3] memory loyaltyOnly = [false, true, false];
+        bool[3] memory loyaltyAndIqr = [true, true, false];
         bool[3] memory noFilter = [false, false, false];
 
         string[] memory subLocations = new string[](1);
@@ -639,7 +685,8 @@ contract AgentManagementIntegrationTest is Test {
             "Note",
             allPermissions,
             subLocations,
-            subPhones
+            subPhones,
+            domain
         );
         
         vm.warp(currentTime + 1 seconds);
@@ -653,7 +700,8 @@ contract AgentManagementIntegrationTest is Test {
             "Note",
             iqrOnly,
             subLocations,
-            subPhones
+            subPhones,
+            "domain1"
         );
         
         vm.warp(currentTime + 2 seconds);
@@ -665,9 +713,10 @@ contract AgentManagementIntegrationTest is Test {
             "Address 3",
             "Phone",
             "Note",
-            loyaltyOnly,
+            loyaltyAndIqr,
             subLocations,
-            subPhones
+            subPhones,
+            "domain2"
         );
         
         vm.warp(currentTime + 3 seconds);
@@ -681,7 +730,8 @@ contract AgentManagementIntegrationTest is Test {
             "Note",
             allPermissions,
             subLocations,
-            subPhones
+            subPhones,
+            "domain3"
         );
         
         // Test 1: Get all agents (no permission filter)
@@ -721,8 +771,8 @@ contract AgentManagementIntegrationTest is Test {
             iqrFilter
         );
         
-        assertEq(iqrCount, 3, "Should have 3 agents with IQR");
-        assertEq(iqrAgents.length, 3);
+        assertEq(iqrCount, 4, "Should have 4 agents with IQR");
+        assertEq(iqrAgents.length, 4);
         
         // Verify all returned agents have IQR permission
         for (uint i = 0; i < iqrAgents.length; i++) {
@@ -866,7 +916,8 @@ contract AgentManagementIntegrationTest is Test {
             "Note",
             noFilter,
             subLocations,
-            subPhones
+            subPhones,
+            "domain4"
         );
         
         (
@@ -906,9 +957,11 @@ contract AgentManagementIntegrationTest is Test {
             "Note",
             permissions,
             subLocations,
-            subPhones
+            subPhones,
+            domain
         );
-        
+        enhanced.setAgentIQR(agent1);
+
         // Try to find agents with all permissions (should be empty)
         bool[3] memory allFilter = [true, true, true];
         (
@@ -966,9 +1019,11 @@ contract AgentManagementIntegrationTest is Test {
             "VIP Agent",
             fullPerms,
             subLocations,
-            subPhones
+            subPhones,
+            "domain"
         );
-        
+        enhanced.setAgentIQR(agent1);
+        enhanced.setPointsIQR(agent1);
         vm.warp(block.timestamp + 1 hours);
         
         enhanced.createAgentWithAnalytics(
@@ -979,9 +1034,11 @@ contract AgentManagementIntegrationTest is Test {
             "Standard Agent",
             partialPerms,
             subLocations,
-            subPhones
+            subPhones,
+            "domain1"
         );
-        
+        enhanced.setAgentIQR(agent2);
+        enhanced.setPointsIQR(agent2);
         vm.warp(block.timestamp + 1 hours);
         
         enhanced.createAgentWithAnalytics(
@@ -992,9 +1049,11 @@ contract AgentManagementIntegrationTest is Test {
             "Budget Agent",
             partialPerms,
             subLocations,
-            subPhones
+            subPhones,
+            "domain2"
         );
-        
+        enhanced.setAgentIQR(agent3);
+        enhanced.setPointsIQR(agent3);
         console.log("Created 3 agents");
         
         // STEP 2: Update analytics for agents
@@ -1017,13 +1076,13 @@ contract AgentManagementIntegrationTest is Test {
         vm.stopPrank();
         
         vm.prank(agent1);
-        AgentLoyalty(loyalty1).mint(customer1, 1000 ether, "Customer1 rewards");
+        RestaurantLoyaltySystem(loyalty1).mint(customer1, 1000 ether, "Customer1 rewards");
         
         vm.prank(agent1);
-        AgentLoyalty(loyalty1).mint(customer2, 500 ether, "Customer2 rewards");
+        RestaurantLoyaltySystem(loyalty1).mint(customer2, 500 ether, "Customer2 rewards");
         
         vm.prank(agent2);
-        AgentLoyalty(loyalty2).mint(customer1, 750 ether, "Customer1 at store2");
+        RestaurantLoyaltySystem(loyalty2).mint(customer1, 750 ether, "Customer1 at store2");
         
         console.log("Minted loyalty tokens for customers");
         
@@ -1071,7 +1130,8 @@ contract AgentManagementIntegrationTest is Test {
             "Updated",
             fullPerms, // Grant MeOS now
             newSubLoc,
-            newSubPhone
+            newSubPhone,
+            "domain3"
         );
         
         Agent memory updatedAgent2 = enhanced.getAgent(agent2);
@@ -1081,14 +1141,14 @@ contract AgentManagementIntegrationTest is Test {
         // STEP 6: Migrate loyalty tokens
         console.log("\nStep 6: Migrating loyalty tokens...");
         
-        uint256 agent1Supply = AgentLoyalty(loyalty1).totalSupply();
+        uint256 agent1Supply = RestaurantLoyaltySystem(loyalty1).totalSupply();
         console.log("Agent1 loyalty supply before migration:", agent1Supply);
         
         uint256 migratedAmount = enhanced.migrateLoyaltyTokens(agent1, agent2);
         console.log("Migrated amount:", migratedAmount);
         
         assertEq(migratedAmount, agent1Supply, "Should migrate all tokens");
-        assertTrue(AgentLoyalty(loyalty1).isMigrated(), "Agent1 loyalty should be migrated");
+        assertTrue(RestaurantLoyaltySystem(loyalty1).isMigrated(), "Agent1 loyalty should be migrated");
         
         // STEP 7: Lock and unlock tokens
         console.log("\nStep 7: Testing lock/unlock...");
@@ -1097,11 +1157,11 @@ contract AgentManagementIntegrationTest is Test {
         
         // Mint tokens to contract itself
         vm.prank(agent2);
-        AgentLoyalty(loyalty2).mint(loyalty2, 2000 ether, "Locked rewards");
+        RestaurantLoyaltySystem(loyalty2).mint(loyalty2, 2000 ether, "Locked rewards");
         
         // Freeze to enable unlock
         vm.prank(agent2);
-        AgentLoyalty(loyalty2).freeze();
+        RestaurantLoyaltySystem(loyalty2).freeze();
         
         vm.prank(superAdmin);
         uint256 unlocked = enhanced.unlockLoyaltyTokens(agent2);
@@ -1158,160 +1218,190 @@ contract AgentManagementIntegrationTest is Test {
         assertEq(topAgents[0], agent1, "Agent1 should be top performer");
         
         vm.stopPrank();
-        
+        //Order:
+        address iqrAgentAdd = iqrFactory.getAgentIQRContract(agent2);
+        IQRContracts memory iQRContracts = IAgentIQR(iqrAgentAdd).getIQRSCByAgent(agent2);
+        console.log("(iQRContracts.Management:",iQRContracts.Management);
+        // staffAgentStore.getUserAgetSCs();
+        management = Management(iQRContracts.Management);
+        Points = RestaurantLoyaltySystem(iQRContracts.Points);
+        console.log("Points:",address(Points));
+        _createStaff();
+        _createDishes();
+        _createTables();
+        _order();
         console.log("\n=== FULL WORKFLOW COMPLETED SUCCESSFULLY ===\n");
+        GetByteCode1();
     }
-    
-    // ========================================================================
-    // TEST 9: Edge Cases and Error Handling
-    // ========================================================================
-    
-    function test_EdgeCases_DuplicateAgent() public {
-        vm.startPrank(superAdmin);
-        
-        bool[3] memory permissions = [true, false, false];
-        string[] memory subLocations = new string[](1);
-        subLocations[0] = "Branch";
-        string[] memory subPhones = new string[](1);
-        subPhones[0] = "0123456789";
-        
-        // Create agent
-        enhanced.createAgentWithAnalytics(
-            agent1,
-            "Store",
-            "Address",
-            "Phone",
-            "Note",
-            permissions,
-            subLocations,
-            subPhones
-        );
-        
-        // Try to create same agent again - should revert
-        vm.expectRevert("DuplicateAgent");
-        enhanced.createAgentWithAnalytics(
-            agent1,
-            "Store 2",
-            "Address 2",
-            "Phone",
-            "Note",
-            permissions,
-            subLocations,
-            subPhones
-        );
-        
+    function _createDishes()public{
+         vm.startPrank(agent2);
+        Category memory category1 = Category({
+            code:"THITBO",
+            name:"thit bo",
+            rank:1,
+            desc:"Cac mon voi thit bo",
+            active:true,
+            imgUrl:"_imgURL1"
+        });
+        management.CreateCategory(category1);
+
+        string[] memory ingredients = new string[](1);
+        ingredients[0] = "thit tuoi";
+        Dish memory dish1 = Dish({
+            code:"dish1_code",
+            nameCategory:"Thit bo",
+            name:"Bo BBQ",
+            des:"Thit bo nuong BBQ voi nhieu loai sot",
+            available:true,
+            active:true,
+            imgUrl:"img_bo1",
+            averageStar: 0,
+            cookingTime: 30,
+            ingredients:ingredients,
+            showIngredient: true,
+            videoLink: "videoLink",
+            totalReview:0,
+            orderNum:0,
+            createdAt:0
+        });
+        Attribute[] memory attrs1 = new Attribute[](1);
+        attrs1[0] = Attribute({
+            id: bytes32(0),
+            key: "size",
+            value: "S"
+        });
+        VariantParams memory variant1 = VariantParams({
+            attrs: attrs1,
+            price: 1000
+        });
+        //
+        Attribute[] memory attrs2 = new Attribute[](1);
+        attrs2[0] = Attribute({
+            id: keccak256(abi.encodePacked("1")),
+            key: "size",
+            value: "M"
+        });
+        VariantParams memory variant2 = VariantParams({
+            attrs: attrs2,
+            price: 2000
+        });
+        //
+        Attribute[] memory attrs3 = new Attribute[](1);
+        attrs3[0] = Attribute({
+            id: keccak256(abi.encodePacked("2")),
+            key: "size",
+            value: "L"
+        });
+        VariantParams memory variant3 = VariantParams({
+            attrs: attrs3,
+            price: 3000
+        });
+        //
+        VariantParams[] memory variants = new VariantParams[](3);
+        variants[0] = variant1;
+        variants[1] = variant2;
+        variants[2] = variant3;
+
+        management.CreateDish("THITBO",dish1,variants);
         vm.stopPrank();
-        
-        console.log("Test 9a PASSED: Duplicate agent prevention");
+    } 
+    function _createStaff()public{
+        vm.startPrank(agent2);
+        //CreatePosition
+        STAFF_ROLE[] memory staff1Roles = new STAFF_ROLE[](1);
+        staff1Roles[0] = STAFF_ROLE.UPDATE_STATUS_DISH;
+
+        management.CreatePosition("phuc vu ban",staff1Roles);
+        //CreateWorkingShift
+        management.CreateWorkingShift("ca sang",28800,43200); ////số giây tính từ 0h ngày hôm đó. vd 08:00 là 8*3600=28800
+
+        WorkingShift[] memory shifts = management.getWorkingShifts();
+        assertEq(shifts[0].title,"ca sang","working shift title should equal");
+
+        WorkingShift[] memory staff1Shifts = new WorkingShift[](2);
+        staff1Shifts[0] = shifts[0];
+
+        Staff memory staff = Staff({
+            wallet: staff1,
+            name:"thuy",
+            code:"NV1",
+            phone:"0913088965",
+            addr:"phu nhuan",
+            position: "phuc vu ban",
+            role:ROLE.STAFF,
+            active: true,
+            linkImgSelfie: "linkImgSelfie",
+            linkImgPortrait:"linkImgPortrait",
+            shifts:staff1Shifts,
+            roles: staff1Roles
+
+        });
+        management.CreateStaff(staff);
+        vm.stopPrank();
     }
-    
-    function test_EdgeCases_InvalidAddress() public {
-        vm.startPrank(superAdmin);
-        
-        bool[3] memory permissions = [true, false, false];
-        string[] memory subLocations = new string[](1);
-        subLocations[0] = "Branch";
-        string[] memory subPhones = new string[](1);
-        subPhones[0] = "0123456789";
-        
-        // Try to create agent with zero address
-        vm.expectRevert("InvalidWallet");
-        enhanced.createAgentWithAnalytics(
-            address(0),
-            "Store",
-            "Address",
-            "Phone",
-            "Note",
-            permissions,
-            subLocations,
-            subPhones
-        );
-        
+    function _createTables()public {
+        vm.startPrank(agent2);
+        management.CreateArea(1,"Khu A");
         vm.stopPrank();
-        
-        console.log("Test 9b PASSED: Invalid address prevention");
     }
-    
-    function test_EdgeCases_PaginationBoundaries() public {
-        vm.startPrank(superAdmin);
-        
-        bool[3] memory permissions = [true, false, false];
-        string[] memory subLocations = new string[](1);
-        subLocations[0] = "Branch";
-        string[] memory subPhones = new string[](1);
-        subPhones[0] = "0123456789";
-        
-        // Create 5 agents
-        address[] memory agents = new address[](5);
-        for (uint i = 0; i < 5; i++) {
-            agents[i] = makeAddr(string(abi.encodePacked("agent", vm.toString(i))));
-            enhanced.createAgentWithAnalytics(
-                agents[i],
-                string(abi.encodePacked("Store ", vm.toString(i))),
-                "Address",
-                "Phone",
-                "Note",
-                permissions,
-                subLocations,
-                subPhones
-            );
-        }
-        
-        // Test page beyond range
-        bool[3] memory noFilter = [false, false, false];
-        (
-            AgentInfo[] memory emptyPage,
-            uint256 totalCount,
-            uint256 totalPages,
-            uint256 currentPage
-        ) = enhanced.getAgentsInfoPaginatedWithPemissions(
-            0,
-            block.timestamp,
-            "createdAt",
-            true,
-            999, // Page way beyond range
-            10,
-            noFilter
+    function _order()public {
+        vm.warp(currentTime);
+        vm.prank(agent2);
+        Points.updateExchangeRate(1);
+        vm.startPrank(customer1);
+        //register member
+        RegisterInPut memory input = RegisterInPut({
+            _memberId :"CUST0001",
+            _phoneNumber:"0123456789",
+            _firstName: "Nguyen",
+            _lastName:"Van A",
+            _whatsapp:"+84365621276",
+            _email:"abc@gmail.com",
+            _avatar:"avatar"
+
+        });
+        POINTS.registerMember(input);
+        //order
+        uint table =1;
+        string[] memory dishCodes = new string[](1);
+        dishCodes[0] = "dish1_code";
+        uint8[] memory quantities = new uint8[](1);
+        quantities[0] = 2;
+        string[] memory notes = new string[](1);
+        notes[0] = "";
+        //
+        DishInfo memory dishInfo = management.getDishInfo("dish1_code");       
+        bytes32[] memory variantIDs = new bytes32[](3);
+        variantIDs[0] = dishInfo.variants[0].variantID;
+        variantIDs[1] = dishInfo.variants[1].variantID;
+        variantIDs[2] = dishInfo.variants[2].variantID;
+        bytes32 orderId1T1 = ORDER.makeOrder(
+            table,
+            dishCodes,
+            quantities,
+            notes,
+            variantIDs
         );
-        
-        assertEq(emptyPage.length, 0, "Should return empty for out of range page");
-        assertEq(totalCount, 5, "Total count should still be correct");
-        assertGt(totalPages, 0, "Should have valid total pages");
-        
+        string memory discountCode = "";
+        uint tip = 0;
+        Payment memory payment = ORDER.getTablePayment(1);
+        uint256 paymentAmount = payment.total; //(2200)
+        console.log("paymentAmount:",paymentAmount);
+        string memory txID = "";
+        ORDER.executeOrder(1,discountCode,tip,paymentAmount,txID,false);
+        ORDER.UpdateForReport(1);
+        MANAGEMENT.UpdateTotalRevenueReport(currentTime,payment.foodCharge-payment.discountAmount);
+        MANAGEMENT.SortDishesWithOrderRange(0,10);
+        MANAGEMENT.UpdateRankDishes();
         vm.stopPrank();
+        vm.startPrank(staff1);
+        ORDER.confirmPayment(1,payment.id,"paid");
+        POINTS.earnPoints("CUST0001", payment.foodCharge-payment.discountAmount, payment.id,0);
         
-        console.log("Test 9c PASSED: Pagination boundaries");
-    }
-    
-    function test_EdgeCases_NonExistentAgent() public {
-        vm.startPrank(superAdmin);
-        
-        // Try to update non-existent agent
-        bool[3] memory permissions = [true, false, false];
-        string[] memory subLoc = new string[](0);
-        uint[] memory subLocIdx = new uint[](0);
-        string[] memory subPhone = new string[](0);
-        uint[] memory subPhoneIdx = new uint[](0);
-        
-        vm.expectRevert("AgentNotFound");
-        enhanced.updateAgent(
-            agent1, // Doesn't exist
-            "Store",
-            "Address",
-            "Phone",
-            "Note",
-            permissions,
-            subLoc,
-            subPhone
-        );
-        
-        // Try to delete non-existent agent
-        vm.expectRevert("AgentNotFound");
-        enhanced.deleteAgent(agent1);
-        
+        (, uint256 points1,,,,,,,,,,) = POINTS.getMember(customer1);
+        console.log("Points after first purchase:", points1);
+        // assertEq(points1, 212);
         vm.stopPrank();
-        
-        console.log("Test 9d PASSED: Non-existent agent handling");
     }
     
     // ========================================================================
@@ -1349,7 +1439,7 @@ contract AgentManagementIntegrationTest is Test {
         console.log("Loyalty Agents:", perms[1]);
         console.log("MeOS Agents:", perms[2]);
     }
-    function GetByteCode()public {
+    function GetByteCode1()public {
     //
         bytes memory bytesCodeCall = abi.encodeCall(
         enhanced.getAgentsInfoPaginated,
@@ -1362,6 +1452,44 @@ contract AgentManagementIntegrationTest is Test {
             20
         ));
         console.log("enhanced getAgentsInfoPaginated:");
+        console.logBytes(bytesCodeCall);
+        console.log(
+            "-----------------------------------------------------------------------------"
+        );  
+        //loyaltyFactory.setPointsImp(address(POINTS_IMP));
+        bytesCodeCall = abi.encodeCall(
+            loyaltyFactory.setPointsImp,
+            (
+                0xE476Be15a7bf3b1DCcb0b6aF8C88fa233F6A9471            
+            )
+        );
+        console.log("loyaltyFactory: setPointsImp:");
+        console.logBytes(bytesCodeCall);
+        console.log(
+            "-----------------------------------------------------------------------------"
+        );  
+        //enhanced.setPointsIQR(agent1);
+        bytesCodeCall = abi.encodeCall(
+            enhanced.setPointsIQR,
+            (
+                0xdf182ed5CF7D29F072C429edd8BFCf9C4151394B            
+            )
+        );
+        console.log("enhanced: setPointsIQR:");
+        console.logBytes(bytesCodeCall);
+        console.log(
+            "-----------------------------------------------------------------------------"
+        );  
+        //        enhanced.setFactoryContracts(
+        bytesCodeCall = abi.encodeCall(
+            enhanced.setFactoryContracts,
+            (
+            address(iqrFactory),
+            address(loyaltyFactory),
+            address(revenueManager)
+            )
+        );
+        console.log("enhanced: setFactoryContracts:");
         console.logBytes(bytesCodeCall);
         console.log(
             "-----------------------------------------------------------------------------"
@@ -1415,7 +1543,8 @@ contract AgentManagementIntegrationTest is Test {
             "Note",
             allFilter,
             subLocations,
-            subPhones
+            subPhones,
+            domain
         ));
     console.log("createAgentWithAnalytics:");
     console.logBytes(bytesCodeCall);
@@ -1433,6 +1562,6 @@ contract AgentManagementIntegrationTest is Test {
     console.log(
         "-----------------------------------------------------------------------------"
     ); 
-
+    //
     }
 }

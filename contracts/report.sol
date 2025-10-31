@@ -146,7 +146,7 @@ contract RestaurantReporting is
         uint month = _getMonth(date * 86400);
         monthlyFoodRatings[month][rating] += count;
     }
-    //hàm này chưa được gọi
+    //Order gọi
     function UpdateDishDailyData(
         string memory dishCode,
         uint createdAt,
@@ -184,11 +184,26 @@ contract RestaurantReporting is
         
         return result;
     }    
-function UpdateDishStats(string memory dishCode, uint revenue, uint orders) external {
+    function UpdateDishStats(string memory dishCode, uint revenue, uint orders) external {
         dishTotalRevenue[dishCode] += revenue;
         dishTotalOrders[dishCode] += orders;
     }
+    function BatchUpdateDishStats(
+        string[] memory dishCodes,
+        uint[] memory revenues,
+        uint[] memory ordersList
+    ) external {
+        require(
+            dishCodes.length == revenues.length && 
+            dishCodes.length == ordersList.length,
+            "Input length mismatch"
+        );
 
+        for (uint i = 0; i < dishCodes.length; i++) {
+            dishTotalRevenue[dishCodes[i]] += revenues[i];
+            dishTotalOrders[dishCodes[i]] += ordersList[i];
+        }
+    }
     function UpdateDishRanking(string memory dishCode, uint ranking) external onlyRole(ROLE_ADMIN) {
         dishRanking[dishCode] = ranking;
     }

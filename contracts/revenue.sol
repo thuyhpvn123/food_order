@@ -19,7 +19,8 @@ contract RevenueManager is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     mapping(uint256 => Revenue) public dailyRevenue; // timestamp (day) => revenue
     mapping(uint256 => Revenue) public monthlyRevenue; // timestamp (month) => revenue
     mapping(uint256 => Revenue) public yearlyRevenue; // timestamp (year) => revenue
-    
+    address public enhancedAgent;
+
     event AgentAdded(address indexed agent, uint256 timestamp);
     event RevenueRecorded(
         address indexed agent, 
@@ -46,13 +47,21 @@ contract RevenueManager is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         __UUPSUpgradeable_init();
         version = "1.0.0";
     }
-    
+     modifier onlyEnhanceSC {
+        require(msg.sender == enhancedAgent,"only enhancedAgent contract can call");
+        _;
+    }
+
+    function setEnhancedAgent(address _enhancedAgent) external onlyOwner {
+        enhancedAgent = _enhancedAgent;
+    }
+
     function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
     
     /**
      * @dev Add new agent to revenue tracking
      */
-    function addAgent(address _agent) external onlyOwner {
+    function addAgent(address _agent) external onlyEnhanceSC {
         require(_agent != address(0), "Invalid agent address");
         require(agentRevenues[_agent].agent == address(0), "Agent already exists");
         
@@ -77,7 +86,7 @@ contract RevenueManager is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         uint8 _moduleType, 
         uint256 _amount,
         string memory _metadata
-    ) external onlyOwner {
+    ) external  {
         _recordSingleRevenue(_agent, _moduleType, _amount, _metadata);
     }
     
@@ -135,7 +144,7 @@ contract RevenueManager is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         uint8[] memory _moduleTypes,
         uint256[] memory _amounts,
         string[] memory _metadatas
-    ) external onlyOwner {
+    ) external onlyEnhanceSC {
         require(
             _agents.length == _moduleTypes.length &&
             _moduleTypes.length == _amounts.length &&

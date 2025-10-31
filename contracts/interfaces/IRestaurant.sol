@@ -1,6 +1,19 @@
 // SPDX-License-Identifier: SEE LICENSE IN LICENSE
 pragma solidity ^0.8.20;
-
+enum BannerPosition {
+    HOME,
+    PAYMENT_PAGE
+}
+enum LinkBannerType {
+    OUTSIDE_LINK,
+    WEB_MEMBER_LINK,
+    WRITING
+}
+enum DiscountType {
+    MANUAL,        // Áp thủ công
+    AUTO_ALL,      // Tự động cho mọi khách
+    AUTO_GROUP     // Tự động cho nhóm
+}
 enum ROLE {
     STAFF,
     ADMIN
@@ -52,6 +65,10 @@ enum ORDER_STATUS {
     UNCONFIRMED,
     CONFIRMED,
     FINISHED
+}
+struct Area {
+    uint id;
+    string name;
 }
 // Restaurant Information
 struct RestaurantInfo {
@@ -167,7 +184,11 @@ struct Discount {
     string imgURL;
     uint amountMax;
     uint amountUsed;
-    uint updatedAt;   
+    uint updatedAt;  
+    DiscountType discountType;       // Loại discount
+    bytes32[] targetGroupIds;        // Danh sách group IDs (cho AUTO_GROUP)
+    uint pointCost;                  // Điểm cần để redeem voucher
+    bool isRedeemable;               // Có thể đổi bằng điểm không 
 }
 
 struct Payment {
@@ -221,6 +242,7 @@ struct Banner {
     bool active;
     uint256 from;
     uint256 to;
+    BannerPosition location;
     
 }
 struct TCInfo {

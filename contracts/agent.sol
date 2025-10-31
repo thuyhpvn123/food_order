@@ -7,7 +7,8 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 import "./interfaces/IAgent.sol";
-import {AgentLoyalty,AgentIQR} from "./agentIqr.sol";
+import {AgentIQR} from "./agentIqr.sol";
+import {RestaurantLoyaltySystem} from "./agentLoyalty.sol";
 import {IQRFactory} from "./iqrFactory.sol";
 // import "forge-std/console.sol";
 contract AgentManagement is 
@@ -41,8 +42,9 @@ contract AgentManagement is
     bool public paused ;
     Agent[] public deletedAgents;
     mapping(address => bool) public isAdmin;
-
-    uint256[50] private __gap;
+    mapping(string => address) public mDomainToWallet;
+    mapping(address => string) public mAgentToDomain;
+    uint256[48] private __gap;
     // Events
     event SuperAdminSet(address indexed admin);
     event AgentCreated(address indexed agent, string storeName, uint256 timestamp);
@@ -118,65 +120,15 @@ contract AgentManagement is
     function setFactoryContracts(
         address _iqrFactory,
         address _loyaltyFactory,
-        address _revenueManager,
-        address _mtdToken
+        address _revenueManager
+        // address _mtdToken
     ) external onlySuperAdmin {
         iqrFactory = _iqrFactory;
         loyaltyFactory = _loyaltyFactory;
         revenueManager = _revenueManager;
-        mtdToken = _mtdToken;
+        // mtdToken = _mtdToken;
     }
     
-    // ========================================================================
-    // AGENT MANAGEMENT
-    // ========================================================================
-    
-    /**
-     * @dev Create new agent with permissions
-     */
-    // function createAgent(
-    //     address _walletAddress,
-    //     string memory _storeName,
-    //     string memory _address,
-    //     string memory _phone,
-    //     string memory _note,
-    //     bool[3] memory _permissions,
-    //     string[] memory _subLocations,
-    //     string[] memory _subPhones
-    // ) external onlySuperAdmin whenNotPaused nonReentrant returns (bool) {
-    //     require(_subLocations.length == _subPhones.length,"length of subLocations and subPhones not match");
-    //     require(_walletAddress != address(0),"InvalidWallet");
-    //     require(!agents[_walletAddress].exists,"DuplicateAgent");
-    //     require(bytes(_storeName).length != 0 && bytes(_storeName).length < 100,"Invalid Store Name");
-        
-    //     agents[_walletAddress] = Agent({
-    //         walletAddress: _walletAddress,
-    //         storeName: _storeName,
-    //         storeAddress: _address,
-    //         phone: _phone,
-    //         note: _note,
-    //         permissions: _permissions,
-    //         subLocations: _subLocations,
-    //         subPhones: _subPhones,
-    //         createdAt: block.timestamp,
-    //         updatedAt: block.timestamp,
-    //         isActive: true,
-    //         exists: true
-    //     });
-        
-    //     agentList.push(_walletAddress);
-        
-    //     // Add to revenue manager
-    //     if (revenueManager != address(0)) {
-    //         try IRevenueManager(revenueManager).addAgent(_walletAddress) {} catch {}
-    //     }
-        
-    //     // Grant permissions with error handling
-    //     _grantPermissions(_walletAddress, _permissions);
-        
-    //     emit AgentCreated(_walletAddress, _storeName, block.timestamp);
-    //     return true;
-    // }
     function getSubLocationCount(address _agent) public view returns (uint256) {
         return agents[_agent].subLocations.length;
     }
@@ -185,13 +137,13 @@ contract AgentManagement is
      * @dev Grant permissions to agent
      */
     function _grantPermissions(address _agent, bool[3] memory _permissions) internal {
-        // IQR Permission
         if (_permissions[0]) {
             _grantIQRPermission(_agent);
         }
         
         // Loyalty Permission  
         if (_permissions[1]) {
+            require(_permissions[0],"need iqr permission also to set this permission");
             _grantLoyaltyPermission(_agent);
         }
         
@@ -200,10 +152,6 @@ contract AgentManagement is
             _grantMeOSPermission(_agent);
         }
     }
-    
-    /**
-     * @dev Grant IQR permission by deploying contract
-     */
     function _grantIQRPermission(address _agent) internal {
         if (iqrFactory == address(0)) {
             agents[_agent].permissions[0] = false;
@@ -214,7 +162,7 @@ contract AgentManagement is
         emit PermissionGranted(_agent, 0, block.timestamp);
 
     }
-    
+
     /**
      * @dev Grant Loyalty permission by deploying contract
      */
@@ -225,7 +173,7 @@ contract AgentManagement is
         }
         
         address contractAddr = ILoyaltyFactory(loyaltyFactory).createAgentLoyalty(_agent);
-            agentLoyaltyContracts[_agent] = contractAddr;
+            agentLoyaltyContracts[_agent] = contractAddr;            // la contract Points
             emit PermissionGranted(_agent, 1, block.timestamp);
     }
     
@@ -270,8 +218,10 @@ contract AgentManagement is
         string memory _note,
         bool[3] memory _permissions,
         string[] memory _subLocations,
-        string[] memory _subPhones
+        string[] memory _subPhones,
+        string memory _domain
     ) external onlySuperAdmin validAgent(_agent) whenNotPaused nonReentrant {
+        require( mDomainToWallet[_domain] == address(0),"domain was used");
         Agent storage agent = agents[_agent];
         
         // Update basic info
@@ -280,6 +230,7 @@ contract AgentManagement is
         agent.phone = _phone;
         agent.note = _note;
         agent.updatedAt = block.timestamp;
+        agent.domain = _domain;
         if(_subLocations.length>0){
             delete agent.subLocations;
 
@@ -296,7 +247,9 @@ contract AgentManagement is
 
         // Update permissions
         _updatePermissions(_agent, _permissions);
-        
+        mDomainToWallet[_domain] = agent.walletAddress;
+        mAgentToDomain[agent.walletAddress] = _domain;
+
         emit AgentUpdated(_agent, block.timestamp);
     }
     
@@ -334,7 +287,7 @@ contract AgentManagement is
         } else if (_permissionType == 1) { // Loyalty
             address loyaltyContract = agentLoyaltyContracts[_agent];
             if (loyaltyContract != address(0)) {
-                IAgentLoyalty(loyaltyContract).freeze();
+                IRestaurantLoyaltySystem(loyaltyContract).freeze();
             }
         } else if (_permissionType == 2) { // MeOS
             meosLicenses[_agent].isActive = false;
@@ -351,9 +304,9 @@ contract AgentManagement is
         if (agents[_agent].permissions[1]) {
             address loyaltyContract = agentLoyaltyContracts[_agent];
             if (loyaltyContract != address(0)) {
-                uint256 supply = IAgentLoyalty(loyaltyContract).totalSupply(); 
-                bool isFrozen = IAgentLoyalty(loyaltyContract).isFrozen(); 
-                bool isRedeemOnly = IAgentLoyalty(loyaltyContract).isRedeemOnly();
+                uint256 supply = IRestaurantLoyaltySystem(loyaltyContract).totalSupply(); 
+                bool isFrozen = IRestaurantLoyaltySystem(loyaltyContract).isFrozen(); 
+                bool isRedeemOnly = IRestaurantLoyaltySystem(loyaltyContract).isRedeemOnly();
                 require(!(supply > 0 && !isFrozen && !isRedeemOnly),"HasActiveLoyaltyTokens");
             }
         }
@@ -377,7 +330,7 @@ contract AgentManagement is
  * @param _page Page number (starts from 1)
  * @param _pageSize Number of items per page
  * @param _searchTerm Search term for store name or wallet address (empty string for no filter)
- * @return agents Array of deleted agent information
+ * @return agentArr Array of deleted agent information
  * @return totalCount Total number of matching deleted agents
  * @return totalPages Total number of pages
  * @return currentPage Current page number
@@ -387,7 +340,7 @@ function getDeletedAgentsPaginated(
     uint256 _pageSize,
     string memory _searchTerm
 ) external view returns (
-    Agent[] memory agents,
+    Agent[] memory agentArr,
     uint256 totalCount,
     uint256 totalPages,
     uint256 currentPage
@@ -575,7 +528,7 @@ function _addressToString(address _addr) internal pure returns (string memory) {
     {
         address loyaltyContract = agentLoyaltyContracts[_agent];
         if (loyaltyContract == address(0)) return 0;
-        uint unlockedAmount =  IAgentLoyalty(loyaltyContract).unlockTokens();
+        uint unlockedAmount =  IRestaurantLoyaltySystem(loyaltyContract).unlockTokens();
         emit LoyaltyTokensUnlocked(_agent, unlockedAmount);
         return unlockedAmount;
 
@@ -615,8 +568,8 @@ function _addressToString(address _addr) internal pure returns (string memory) {
         require(newContract != address(0), "New contract not found");
         require(oldContract != newContract, "Contracts are the same");
         
-        AgentLoyalty oldLoyalty = AgentLoyalty(oldContract);
-        AgentLoyalty newLoyalty = AgentLoyalty(newContract);
+        RestaurantLoyaltySystem oldLoyalty = RestaurantLoyaltySystem(oldContract);
+        RestaurantLoyaltySystem newLoyalty = RestaurantLoyaltySystem(newContract);
         
         // Verify old contract is not already migrated
         require(!oldLoyalty.migrated(), "Old contract already migrated");
@@ -666,7 +619,7 @@ function _addressToString(address _addr) internal pure returns (string memory) {
             return (false, address(0), 0, 0, 0);
         }
         
-        AgentLoyalty loyalty = AgentLoyalty(loyaltyContract);
+        RestaurantLoyaltySystem loyalty = RestaurantLoyaltySystem(loyaltyContract);
         
         (bool migrated, address migratedToAddr, uint256 migrated_amount, uint256 remaining) = 
             loyalty.getMigrationInfo();
@@ -697,11 +650,11 @@ function _addressToString(address _addr) internal pure returns (string memory) {
             return (false, false, 0, 0, "Contracts not found");
         }
         
-        AgentLoyalty oldLoyalty = AgentLoyalty(oldContract);
-        AgentLoyalty newLoyalty = AgentLoyalty(newContract);
+        RestaurantLoyaltySystem oldLoyalty = RestaurantLoyaltySystem(oldContract);
+        RestaurantLoyaltySystem newLoyalty = RestaurantLoyaltySystem(newContract);
         
         oldContractMigrated = oldLoyalty.migrated();
-        (,, uint256 migrated,) = oldLoyalty.getMigrationInfo();
+        // (,, uint256 migrated,) = oldLoyalty.getMigrationInfo();
         (uint256 oldSupply,,,,) = oldLoyalty.getTokenStats();
         (uint256 newSupply,,,,) = newLoyalty.getTokenStats();
         
@@ -736,7 +689,7 @@ function _addressToString(address _addr) internal pure returns (string memory) {
         address loyaltyContract = agentLoyaltyContracts[_agent];
        require(loyaltyContract != address(0),"ContractNotSet");
         
-        IAgentLoyalty(loyaltyContract).setRedeemOnly(_days);
+        IRestaurantLoyaltySystem(loyaltyContract).setRedeemOnly(_days);
     }
     
     // ========================================================================
@@ -755,8 +708,8 @@ function _addressToString(address _addr) internal pure returns (string memory) {
         // MTD Stats
         if (mtdToken != address(0)) {
             uint256 supply = IMTDToken(mtdToken).totalSupply();
-            
-            uint256 balance = IMTDToken(mtdToken).balanceOf(address(this));
+            mtdStats.totalSupply = supply;
+            // uint256 balance = IMTDToken(mtdToken).balanceOf(address(this));
         }
         
         // Revenue Stats

@@ -5,7 +5,7 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {AgentManagement} from "./agent.sol";
-import {PaginationResult,License,AgentInfo,Agent, AgentAnalytics, TimeFilter, IIQRFactory, ILoyaltyFactory, IAgentLoyalty, IAgentIQR, IRevenueManager} from "./interfaces/IAgent.sol";
+import {PaginationResult,License,AgentInfo,Agent, AgentAnalytics, TimeFilter, IIQRFactory, ILoyaltyFactory, IRestaurantLoyaltySystem, IAgentIQR, IRevenueManager,IQRContracts} from "./interfaces/IAgent.sol";
 // import "forge-std/console.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 
@@ -25,7 +25,7 @@ contract EnhancedAgentManagement is AgentManagement {
     mapping(address => AgentAnalytics) public agentAnalytics;
     mapping(uint256 => address[]) public monthlyAgents; // month timestamp => agents created
     mapping(uint256 => address[]) public yearlyAgents;  // year timestamp => agents created
-    
+        
     // Enhanced events
     event AgentPerformanceUpdated(address indexed agent, uint256 score, uint256 timestamp);
     event BulkOperationCompleted(string operation, uint256 successCount, uint256 failureCount);
@@ -38,6 +38,7 @@ contract EnhancedAgentManagement is AgentManagement {
     /**
      * @dev Enhanced agent creation with automatic analytics setup
      */
+     //sau khi gọi createAgentWithAnalytics thì cần gọi thêm 2 hàm để khởi tạo các contract iqr: setAgentIQR, setPointsIQR
     function createAgentWithAnalytics(
         address _walletAddress,
         string memory _storeName,
@@ -46,7 +47,8 @@ contract EnhancedAgentManagement is AgentManagement {
         string memory _note,
         bool[3] memory _permissions,
         string[] memory _subLocations,
-        string[] memory _subPhones
+        string[] memory _subPhones,
+        string memory _domain
     ) external onlySuperAdmin whenNotPaused nonReentrant returns (bool) {
         // Create basic agent using internal function
         bool success = _createAgentInternal(
@@ -57,7 +59,8 @@ contract EnhancedAgentManagement is AgentManagement {
             _note, 
             _permissions,
             _subLocations,
-            _subPhones
+            _subPhones,
+            _domain
         );
         
         if (success) {
@@ -93,13 +96,16 @@ contract EnhancedAgentManagement is AgentManagement {
         string memory _note,
         bool[3] memory _permissions,
         string[] memory _subLocations,
-        string[] memory _subPhones
+        string[] memory _subPhones,
+        string memory _domain
     ) internal returns (bool) {
         require(_subLocations.length == _subPhones.length, "length of subLocations and subPhones not match");
         require(_walletAddress != address(0),"InvalidWallet");
         require(!agents[_walletAddress].exists,"DuplicateAgent");
         require(bytes(_storeName).length != 0 && bytes(_storeName).length < 100,"Invalid Store Name");
-        
+        require( mDomainToWallet[_domain] == address(0),"domain was used");
+        mDomainToWallet[_domain] = _walletAddress;
+        mAgentToDomain[_walletAddress] = _domain;
         agents[_walletAddress] = Agent({
             walletAddress: _walletAddress,
             storeName: _storeName,
@@ -112,7 +118,8 @@ contract EnhancedAgentManagement is AgentManagement {
             createdAt: block.timestamp,
             updatedAt: block.timestamp,
             isActive: true,
-            exists: true
+            exists: true,
+            domain: _domain
         });
         
         agentList.push(_walletAddress);
@@ -127,6 +134,28 @@ contract EnhancedAgentManagement is AgentManagement {
         
         emit AgentCreated(_walletAddress, _storeName, block.timestamp);
         return true;
+    }
+    function setAgentIQR(address _agent) external onlySuperAdmin{
+        require (iqrFactory != address(0) , "IQRFactory is not set");
+       IIQRFactory(iqrFactory).setAgentIQR(_agent);
+    }
+    //chỉ gọi khi agent có quyền loyalty
+    //dang le goi trong hàm createAgent nhung phai tach ra de tranh loi out of gas cho FE
+    function setPointsIQR(address _agent)external onlySuperAdmin{
+        require (agentLoyaltyContracts[_agent] != address(0) , "agent has no loyalty permission");
+        IIQRFactory(iqrFactory).setPointsIQRFactory(_agent,agentLoyaltyContracts[_agent]);
+        IQRContracts memory iqr = IIQRFactory(iqrFactory).getIQRSCByAgentFromFactory(_agent);
+        address POINTS_PROXY = ILoyaltyFactory(loyaltyFactory).setPointsLoyaltyFactory(_agent,iqr.Management, iqr.Order);
+        //transfer owner to agent
+        IIQRFactory(iqrFactory).transferOwnerIQRContracts(_agent);
+        ILoyaltyFactory(loyaltyFactory).transferOwnerPointSC(_agent,POINTS_PROXY);
+    }
+
+    function CheckAgentExisted(address _agent)external view returns(bool){
+        return agents[_agent].exists;
+    }
+    function getAgentFromDomain(string memory _domain)external view returns(address){
+        return mDomainToWallet[_domain];
     }
     // ========================================================================
     // ADVANCED FILTERING AND SEARCH
@@ -389,7 +418,7 @@ contract EnhancedAgentManagement is AgentManagement {
                 
                 if (_newPermissions[i]) {
                     // Grant permission
-                    bool success = false;
+                    // bool success = false;
                     _grantIQRPermissionSafe(_agent);
                     _grantLoyaltyPermissionSafe(_agent);
                     _grantMeOSPermission(_agent);                    
@@ -467,10 +496,10 @@ contract EnhancedAgentManagement is AgentManagement {
         if (agents[_agent].permissions[1]) {
             address loyaltyContract = agentLoyaltyContracts[_agent];
             if (loyaltyContract != address(0)) {
-                try IAgentLoyalty(loyaltyContract).totalSupply() returns (uint256 supply) {
+                try IRestaurantLoyaltySystem(loyaltyContract).totalSupply() returns (uint256 supply) {
                     if (supply > 0) {
-                        try IAgentLoyalty(loyaltyContract).isFrozen() returns (bool isFrozen) {
-                            try IAgentLoyalty(loyaltyContract).isRedeemOnly() returns (bool isRedeemOnly) {
+                        try IRestaurantLoyaltySystem(loyaltyContract).isFrozen() returns (bool isFrozen) {
+                            try IRestaurantLoyaltySystem(loyaltyContract).isRedeemOnly() returns (bool isRedeemOnly) {
                                 if (!isFrozen && !isRedeemOnly) {
                                     return false; // Cannot delete with active tokens
                                 }
@@ -667,12 +696,10 @@ contract EnhancedAgentManagement is AgentManagement {
                 
                 // Get revenue breakdown from revenue manager
                 if (revenueManager != address(0)) {
-                    try IRevenueManager(revenueManager).getAgentRevenue(agentAddr) 
-                        returns (uint256 iqr, uint256 loyalty, uint256 meos, uint256 total) {
-                        revenueByModule[0] += iqr;
-                        revenueByModule[1] += loyalty;
-                        revenueByModule[2] += meos;
-                    } catch {}
+                    (uint256 iqr, uint256 loyalty, uint256 meos,) = IRevenueManager(revenueManager).getAgentRevenue(agentAddr) ;
+                    revenueByModule[0] += iqr;
+                    revenueByModule[1] += loyalty;
+                    revenueByModule[2] += meos;
                 }
             }
         }
@@ -737,15 +764,13 @@ contract EnhancedAgentManagement is AgentManagement {
         
         // Check active contracts
         if (permissions[0] && agentIQRContracts[_agent] != address(0)) {
-            try IAgentIQR(agentIQRContracts[_agent]).isActive() returns (bool active) {
-                hasActiveIQR = active;
-            } catch {}
+            bool active = IAgentIQR(agentIQRContracts[_agent]).isActive();
+            hasActiveIQR = active;
         }
         
         if (permissions[1] && agentLoyaltyContracts[_agent] != address(0)) {
-            try IAgentLoyalty(agentLoyaltyContracts[_agent]).isFrozen() returns (bool frozen) {
-                hasActiveLoyalty = !frozen;
-            } catch {}
+            bool frozen = IRestaurantLoyaltySystem(agentLoyaltyContracts[_agent]).isFrozen();
+            hasActiveLoyalty = !frozen;
         }
         
         if (permissions[2]) {
@@ -861,12 +886,10 @@ contract EnhancedAgentManagement is AgentManagement {
         // Get revenue data
         uint256[3] memory revenueByModule;
         if (revenueManager != address(0)) {
-            try IRevenueManager(revenueManager).getAgentRevenue(_agent) 
-                returns (uint256 iqr, uint256 loyalty, uint256 meos, uint256 total) {
-                revenueByModule[0] = iqr;
-                revenueByModule[1] = loyalty;
-                revenueByModule[2] = meos;
-            } catch {}
+            (uint256 iqr, uint256 loyalty, uint256 meos, ) = IRevenueManager(revenueManager).getAgentRevenue(_agent);
+            revenueByModule[0] = iqr;
+            revenueByModule[1] = loyalty;
+            revenueByModule[2] = meos;
         }
         
         // Get number of branches (subLocations)

@@ -10,8 +10,18 @@ import "./interfaces/IManagement.sol";
 import "./interfaces/INoti.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 import "./interfaces/IReport.sol";
-// import "forge-std/console.sol";
-
+import "./interfaces/IAgent.sol";
+import "./interfaces/IPoint.sol";
+import "forge-std/console.sol";
+interface IIQRAgent {
+    function createOrder(
+        bytes32 _paymentId,
+        uint256 _amount
+    ) external ;
+}
+// interface IRevenueManager {
+//     function recordRevenue(address _agent, uint8 _moduleType, uint256 _amount, string memory _metadata) external;
+// }
 // import "./interfaces/IRestaurant.sol";
 contract RestaurantOrder is 
     Initializable, 
@@ -59,13 +69,19 @@ contract RestaurantOrder is
     IRestaurantReporting public Report;
     mapping(uint256 => Review[]) private reviewsByDate; // date => Review[]
     mapping(uint =>mapping(uint => uint)) public mTableToCoursePrice; //table => courseId => coursePrice
-
+    mapping(bytes32 => Order) public mOrderIdToOrder;
+    address public iqrAgentSC;
+    address public agent;
+    address public revenueSC;
+    IPoint public POINTS;
+    mapping(bytes32 => uint256) public paymentPointsUsed; // paymentId => points used
     // Events
     event OrderMade(uint indexed table, bytes32 indexed orderId, uint courseCount);
     event PaymentMade(uint indexed table, bytes32 indexed paymentId, uint total);
     event PaymentConfirmed(bytes32 indexed paymentId, address staff);
+    event PaymentWithPoints(bytes32 indexed paymentId, address indexed customer, uint256 pointsUsed, uint256 pointsValue, uint256 remainingCash);
 
-    uint256[41] private __gap;
+    uint256[39] private __gap;
 
     constructor() {
         _disableInitializers();
@@ -89,8 +105,6 @@ contract RestaurantOrder is
     // Configuration functions
     function setConfig(
         address _management,
-        address _usdt, 
-        address _masterPool,
         address _merchant,
         address _cardVisa,
         uint8 _taxPercent,
@@ -98,16 +112,22 @@ contract RestaurantOrder is
         address _report
     ) external onlyOwner {
         if (_management != address(0)) MANAGEMENT = IManagement(_management);
-        if (_usdt != address(0)) SCUsdt = IERC20(_usdt);
-        if (_masterPool != address(0)) MasterPool = _masterPool;
         if (_merchant != address(0)) merchant = _merchant;
         if (_cardVisa != address(0)) ICARD_VISA = ICardTokenManager(_cardVisa);
         if (_taxPercent <= 100) taxPercent = _taxPercent;
         if (_noti != address(0)) noti = INoti(_noti);
         if (_report != address(0)) Report = IRestaurantReporting(_report);
     }
-    function setReport(address _report) external onlyOwner{
-        Report = IRestaurantReporting(_report);
+    function setPointSC (address _pointSC) external onlyOwner {
+        POINTS = IPoint(_pointSC);
+    }
+    // function setReport(address _report) external onlyOwner{
+    //     Report = IRestaurantReporting(_report);
+    // }
+    function setIQRAgent(address _iqrAgentSC,address _agent, address revenueManager) external onlyOwner{
+        iqrAgentSC = _iqrAgentSC;
+        revenueSC = revenueManager;
+        agent = _agent;
     }
     struct GroupFeature{
         uint time;
@@ -166,6 +186,7 @@ contract RestaurantOrder is
                     require(allOrders[i].status == ORDER_STATUS.CONFIRMED, "Order already finished or invalid");
                 }
                 allOrders[i].status = _status;
+                mOrderIdToOrder[orderId].status = _status;
                 table = allOrders[i].table;
                 found = true;
                 break;
@@ -206,6 +227,7 @@ contract RestaurantOrder is
             status: ORDER_STATUS.UNCONFIRMED
         });
         mTableToOrderIds[table].push(order.id);
+        mOrderIdToOrder[orderId] = order;
         tableOrders[table].push(order);
         // Process courses and calculate total
         uint totalPrice = _processCourses(table, orderId, dishCodes, quantities, notes,variantIDs);
@@ -354,18 +376,57 @@ contract RestaurantOrder is
         return true;       
     }
 
+    // function _applyDiscount(
+    //     Payment storage payment,
+    //     string memory discountCode
+    // ) internal returns (uint discountAmount) {
+    //     if (bytes(discountCode).length == 0) return 0;
+        
+    //     (uint discountPercent, bool active, uint amountUsed, uint amountMax, uint from, uint to) = 
+    //         MANAGEMENT.GetDiscountBasic(discountCode);
+            
+    //     require(active, "Discount inactive");
+    //     require(amountUsed < amountMax, "Discount limit reached");
+    //     require(block.timestamp >= from && block.timestamp <= to, "Discount expired");
+        
+    //     MANAGEMENT.UpdateDiscountCodeUsed(discountCode);
+    //     return (payment.foodCharge * discountPercent) / 100;
+    // }
     function _applyDiscount(
         Payment storage payment,
-        string memory discountCode
+        string memory discountCode,
+        // address customer,
+        bytes32 customerGroup
     ) internal returns (uint discountAmount) {
         if (bytes(discountCode).length == 0) return 0;
         
-        (uint discountPercent, bool active, uint amountUsed, uint amountMax, uint from, uint to) = 
-            MANAGEMENT.GetDiscountBasic(discountCode);
-            
+        (
+            uint discountPercent,
+            bool active,
+            uint amountUsed,
+            uint amountMax,
+            uint from,
+            uint to,
+            DiscountType discountType,
+            bytes32[] memory targetGroupIds
+        ) = MANAGEMENT.GetDiscountBasic(discountCode);
+        
         require(active, "Discount inactive");
         require(amountUsed < amountMax, "Discount limit reached");
         require(block.timestamp >= from && block.timestamp <= to, "Discount expired");
+        
+        if (discountType == DiscountType.AUTO_GROUP) {
+            require(customerGroup != bytes32(0), "Customer not in any group");
+            // Auto group - kiểm tra customer có trong group không
+            bool inTargetGroup = false;
+            for (uint i = 0; i < targetGroupIds.length; i++) {
+                if (targetGroupIds[i] == customerGroup) {
+                    inTargetGroup = true;
+                    break;
+                }
+            }
+            require(inTargetGroup, "Not eligible for this group discount");
+        }
         
         MANAGEMENT.UpdateDiscountCodeUsed(discountCode);
         return (payment.foodCharge * discountPercent) / 100;
@@ -386,7 +447,10 @@ contract RestaurantOrder is
         
         _clearTable(table);
         //update report
-        Report.UpdateDailyStats(block.timestamp/86400, payment.total, 1);
+        Report.UpdateDailyStats(block.timestamp/86400, payment.foodCharge, 1);
+        if(iqrAgentSC != address(0)){
+            createOrderDataForAgentManagement(paymentId,payment.foodCharge);
+        }
         emit PaymentConfirmed(paymentId, msg.sender);
         return true;
     }
@@ -485,7 +549,8 @@ contract RestaurantOrder is
         string memory discountCode,
         uint tip,
         uint256 paymentAmount,
-        string memory txID
+        string memory txID,
+        bool usePoint
     ) external whenNotPaused nonReentrant returns (bool) {
         //pay by visa
         if (bytes(txID).length !=0 ){
@@ -505,8 +570,14 @@ contract RestaurantOrder is
         Payment storage payment = mTableToPayment[table];
         require(payment.status == PAYMENT_STATUS.CREATED, "Invalid payment status");
         
-        // Apply discount
-        uint discountAmount = _applyDiscount(payment, discountCode);
+        // // Apply discount
+        // uint discountAmount = _applyDiscount(payment, discountCode);
+         // Lấy thông tin customer group từ Points contract
+        bytes32 customerGroup = bytes32(0);
+        if (address(POINTS) != address(0)) {
+        customerGroup = POINTS.getMemberToGroup(msg.sender);
+        }
+        uint discountAmount = _applyDiscount(payment, discountCode, customerGroup);
         
         // Update payment
         payment.tip = tip;
@@ -514,17 +585,53 @@ contract RestaurantOrder is
         payment.total = payment.foodCharge + payment.tax + payment.tip - payment.discountAmount;
         
         require(paymentAmount >= payment.total, "Insufficient payment amount");
+        //
+        uint256 pointsUsed = 0;
+        uint256 pointsValue = 0;
+        uint256 remainingAmount = payment.total;
         
+        // Xử lý thanh toán bằng points nếu usePoint = true
+        if (usePoint && address(POINTS) != address(0)) {
+            (pointsUsed, pointsValue, remainingAmount) = _processPointPayment(msg.sender, payment.total);
+            
+            // Lưu thông tin points đã sử dụng
+            paymentPointsUsed[payment.id] = pointsUsed;
+            
+            emit PaymentWithPoints(payment.id, msg.sender, pointsUsed, pointsValue, remainingAmount);
+        }
+        
+        // Nếu còn số tiền phải trả sau khi dùng points
+        if (remainingAmount > 0) {
+            // Pay by VISA
+            if (bytes(txID).length != 0) {
+                require(!usedTxIds[txID], "Transaction ID already used");
+                
+                TransactionStatus memory transaction = ICARD_VISA.getTx(txID);
+                require(transaction.status == TxStatus.SUCCESS, "Transaction not successful");
+                
+                PoolInfo memory poolInfo = ICARD_VISA.getPoolInfo(txID);
+                require(poolInfo.ownerPool == merchant, "Merchant address mismatch");
+                require(poolInfo.parentValue >= remainingAmount, "Insufficient payment amount");
+                
+                usedTxIds[txID] = true;
+                payment.method = usePoint? "VISA + POINTS" : "VISA";
+            } 
+            // Pay by Cash
+            else {
+                require(paymentAmount >= remainingAmount, "Insufficient payment amount");
+                payment.method = usePoint ? "CASH + POINTS" : "CASH";
+            }
+        } else {
+            // Thanh toán hoàn toàn bằng points
+            payment.method = "POINTS";
+        }
+        //
         payment.status = PAYMENT_STATUS.PAID;
         payment.createdAt = block.timestamp;
         
         // Update metadata
         Payment storage meta = mTableToPayment[table];
-        if (bytes(txID).length !=0 ){
-            meta.method = "VISA";
-        } else {
-            meta.method = "CASH";
-        }
+
         meta.discountCode = discountCode;
         
         mIdToPayment[payment.id] = payment;
@@ -545,8 +652,177 @@ contract RestaurantOrder is
         // MANAGEMENT.UpdateTotalRevenueReport(block.timestamp,payment.foodCharge-payment.discountAmount); //FE gọi sau để không bị out of gas
         //  MANAGEMENT.SortDishesWithOrderRange //FE gọi sau để không bị out of gas
         //  MANAGEMENT.UpdateRankDishes //FE gọi sau để không bị out of gas
+        // POINTS.markVoucherAsUsed
+        if(POINTS.isMemberPointSystem(msg.sender)){
+            POINTS.updateLastBuyActivityAt(msg.sender);
+        }
         emit PaymentMade(table, payment.id, payment.total);
         return true;
+    }
+    /**
+    * @dev Xử lý thanh toán bằng points
+    * @return pointsUsed Số điểm đã sử dụng
+    * @return pointsValue Giá trị tiền của points đã dùng
+    * @return remainingAmount Số tiền còn phải trả
+    */
+    function _processPointPayment(
+        address customer,
+        uint256 totalAmount
+    ) internal returns (
+        uint256 pointsUsed,
+        uint256 pointsValue,
+        uint256 remainingAmount
+    ) {
+        // Lấy thông tin member
+        (
+            ,
+            uint256 totalPoints,
+            ,
+            ,
+            ,
+            ,
+            bool isActive,
+            bool isLocked,
+            ,
+            ,
+        ) = POINTS.getMember(customer);
+        
+        require(isActive, "Member not active");
+        require(!isLocked, "Member account is locked");
+        require(totalPoints > 0, "No points available");
+        
+        // Lấy exchange rate và maxPercentPerInvoice từ Points contract
+        (uint256 exchangeRate, uint256 maxPercentPerInvoice) = POINTS.getPaymentConfig();
+        
+        // Tính số tiền tối đa có thể dùng points để thanh toán
+        uint256 maxPayableAmount = (totalAmount * maxPercentPerInvoice) / 100;
+        
+        // Tính giá trị tiền của tất cả points hiện có
+        uint256 totalPointsValue = totalPoints * exchangeRate;
+        
+        // Xác định số tiền thực tế sẽ thanh toán bằng points
+        if (totalPointsValue >= maxPayableAmount) {
+            // Đủ points để thanh toán tối đa cho phép
+            pointsValue = maxPayableAmount;
+            pointsUsed = pointsValue / exchangeRate;
+        } else {
+            // Dùng hết tất cả points
+            pointsValue = totalPointsValue;
+            pointsUsed = totalPoints;
+        }
+        
+        // Tính số tiền còn phải trả
+        remainingAmount = totalAmount > pointsValue ? totalAmount - pointsValue : 0;
+        
+        // Trừ points từ tài khoản member
+        POINTS.usePointsForPayment(customer, pointsUsed, totalAmount);
+        
+        return (pointsUsed, pointsValue, remainingAmount);
+    }
+
+    /**
+    * @dev Preview thanh toán bằng points (không thực hiện giao dịch)
+    */
+    function previewPointPayment(
+        uint table,
+        address customer,
+        string memory discountCode
+    ) external view returns (
+        uint256 totalAmount,
+        uint256 maxPointsCanUse,
+        uint256 maxValueCanPay,
+        uint256 remainingAmount,
+        bool canPayFully
+    ) {
+        require((address(POINTS) != address(0)),"Points contract not set yet");
+        Payment memory payment = mTableToPayment[table];
+        
+        // Tính discount
+        bytes32 customerGroup = bytes32(0);
+        if (address(POINTS) != address(0)) {
+            customerGroup = POINTS.getMemberToGroup(customer);
+        }
+        
+        uint discountAmount = 0;
+        if (bytes(discountCode).length > 0) {
+            (
+                uint discountPercent,
+                bool active,
+                uint amountUsed,
+                uint amountMax,
+                uint from,
+                uint to,
+                ,
+            ) = MANAGEMENT.GetDiscountBasic(discountCode);
+            
+            if (active && amountUsed < amountMax && block.timestamp >= from && block.timestamp <= to) {
+                discountAmount = (payment.foodCharge * discountPercent) / 100;
+            }
+        }
+        
+        totalAmount = payment.foodCharge + payment.tax + payment.tip - discountAmount;
+        
+        // if (address(POINTS) == address(0)) {
+        //     return (totalAmount, 0, 0, totalAmount, false);
+        // }
+        
+        // Lấy thông tin member
+        (
+            ,
+            uint256 totalPoints,
+            ,
+            ,
+            ,
+            ,
+            bool isActive,
+            bool isLocked,
+            ,
+            ,
+        ) = POINTS.getMember(customer);
+        
+        if (!isActive || isLocked || totalPoints == 0) {
+            return (totalAmount, 0, 0, totalAmount, false);
+        }
+        
+        // Lấy config
+        (uint256 exchangeRate, uint256 maxPercentPerInvoice) = POINTS.getPaymentConfig();
+        
+        // Tính toán
+        uint256 maxPayableAmount = (totalAmount * maxPercentPerInvoice) / 100;
+        uint256 totalPointsValue = totalPoints * exchangeRate;
+        
+        if (totalPointsValue >= maxPayableAmount) {
+            maxPointsCanUse = maxPayableAmount / exchangeRate;
+            maxValueCanPay = maxPayableAmount;
+            remainingAmount = totalAmount - maxPayableAmount;
+            canPayFully = (maxPayableAmount >= totalAmount);
+        } else {
+            maxPointsCanUse = totalPoints;
+            maxValueCanPay = totalPointsValue;
+            remainingAmount = totalAmount - totalPointsValue;
+            canPayFully = (totalPointsValue >= totalAmount);
+        }
+        
+        return (totalAmount, maxPointsCanUse, maxValueCanPay, remainingAmount, canPayFully);
+    }
+
+    /**
+    * @dev Lấy thông tin points đã sử dụng cho payment
+    */
+    function getPaymentPointsInfo(bytes32 paymentId) external view returns (
+        uint256 pointsUsed,
+        uint256 pointsValue,
+        string memory paymentMethod
+    ) {
+        pointsUsed = paymentPointsUsed[paymentId];
+        Payment memory payment = mIdToPayment[paymentId];
+        
+        if (pointsUsed > 0 && address(POINTS) != address(0)) {
+            (uint256 exchangeRate,) = POINTS.getPaymentConfig();
+            pointsValue = pointsUsed * exchangeRate;
+        }
+        
+        return (pointsUsed, pointsValue, payment.method);
     }
     function UpdateForReport(uint table) external {
         for (uint i = 0; i < mTableToCourses[table].length; i++) {
@@ -560,6 +836,7 @@ contract RestaurantOrder is
         }
 
     }
+    
     function getPaymentCourses(bytes32 _paymentID) external view returns(SimpleCourse[] memory courses, Payment memory payment){
         return (paymentCourses[_paymentID],mIdToPayment[_paymentID]);
     }
@@ -576,21 +853,24 @@ contract RestaurantOrder is
     ) external returns (bool) {
         require(mIdToPayment[paymentId].id != bytes32(0), "Payment not found");
         require(overalStar >= 1 && overalStar <= 5, "Invalid food rating");
+        require(dishCodes.length == dishStars.length,"number of dishCodes and stars not match ");
         bytes32 id = keccak256(abi.encodePacked(block.timestamp,paymentId,contribution));
-        for (uint i = 0; i < dishCodes.length; i++) {
-            DishReview memory dishReview = DishReview({
-                nameCustomer: nameCustomer,
-                dishCode: dishCodes[i],
-                dishStar: dishStars[i],
-                contribution: contribution,
-                createdAt: block.timestamp,
-                paymentId: paymentId,
-                isShow: true,
-                id: id
-            });
-            mDishCodeToReviews[dishCodes[i]].push(dishReview);
-            mDishReviewIndex[dishCodes[i]][id] = mDishCodeToReviews[dishCodes[i]].length - 1;
-            MANAGEMENT.updateAverageStarDish(dishStars[i],dishCodes[i]);
+        if (dishCodes.length > 0){
+            for (uint i = 0; i < dishCodes.length; i++) {
+                DishReview memory dishReview = DishReview({
+                    nameCustomer: nameCustomer,
+                    dishCode: dishCodes[i],
+                    dishStar: dishStars[i],
+                    contribution: contribution,
+                    createdAt: block.timestamp,
+                    paymentId: paymentId,
+                    isShow: true,
+                    id: id
+                });
+                mDishCodeToReviews[dishCodes[i]].push(dishReview);
+                mDishReviewIndex[dishCodes[i]][id] = mDishCodeToReviews[dishCodes[i]].length - 1;
+                MANAGEMENT.updateAverageStarDish(dishStars[i],dishCodes[i]);
+            }
         }
 
         reviews[paymentId] = Review({
@@ -671,6 +951,42 @@ contract RestaurantOrder is
     function GetOrders(uint _numTable)external view returns(Order[] memory ){
         return tableOrders[_numTable];
     }
+    function GetOrderById(bytes32 orderId)external view returns(Order memory ){
+        return mOrderIdToOrder[orderId];
+    }
+    function GetOrdersPaginationByStatus(
+        uint offset, 
+        uint limit,
+        ORDER_STATUS _status
+    )external view returns(Order[] memory, uint totalCount ){
+        totalCount = 0;
+
+        for(uint i; i<allOrders.length; i++){
+            if(allOrders[i].status == _status){
+                totalCount++;
+            }
+        }
+        if(offset >= totalCount){
+            return (new Order[](0),totalCount);
+        }
+        uint remaining = totalCount - offset;
+        uint count = remaining <limit ? remaining: limit;
+        Order[] memory orders = new Order[](count);
+        uint foundCount = 0;
+        uint skipped = 0;
+        for (uint i = allOrders.length; i>0 && foundCount <count; i--) {
+            uint index = i -1;
+            if(allOrders[index].status == _status){
+                if(skipped < offset){
+                    skipped ++;
+                    continue;
+                }
+                orders[foundCount] = allOrders[index];
+                foundCount++;
+            }
+        }
+        return (orders,totalCount);
+    }
 
     function getTableCourseCount(uint table) external view returns (uint) {
         return mTableToCourses[table].length;
@@ -695,10 +1011,13 @@ contract RestaurantOrder is
     function GetCoursesByOrderId(bytes32 _idOrder) external view returns(SimpleCourse[] memory){
         return mOrderIdToCourses[_idOrder];
     }
-    function getPayment(bytes32 paymentId) external view returns (Payment memory) {
+    function getPayment(bytes32 paymentId) public view returns (Payment memory) {
         return mIdToPayment[paymentId];
     }
-
+    function isValidAmount(bytes32 _paymentId,uint _amount)external view returns(bool){
+        Payment memory payment = getPayment(_paymentId);
+        return (payment.foodCharge - payment.discountAmount) == _amount;
+    } 
     function getTablePayment(uint table) external view returns (Payment memory) {
         Payment memory payment = mTableToPayment[table];
         return payment;
@@ -793,10 +1112,11 @@ contract RestaurantOrder is
     
         // Lấy kết quả từ offset
         PaymentInfo[] memory result = new PaymentInfo[](limit);
-        for (uint i = 0; i < limit; i++) {            
+        for (uint i = 0; i < limit; i++) {   
+            uint256 reverseIndex = paymentCount - 1 - offset - i;         
             result[i] = PaymentInfo({
-                payment : mIdToPayment[allPaymentIds[offset + i]],
-                courses : paymentCourses[allPaymentIds[offset + i]]
+                payment : mIdToPayment[allPaymentIds[reverseIndex]],
+                courses : paymentCourses[allPaymentIds[reverseIndex]]
             });
             
         }      
@@ -805,5 +1125,10 @@ contract RestaurantOrder is
     function getTaxPercent() external view returns (uint8) {
         return taxPercent;
     }
+    function createOrderDataForAgentManagement(bytes32 paymentId, uint amount) internal{
+        require(iqrAgentSC != address(0) && revenueSC != address(0),"revenueSC or iqrAgentSC not set yet");
+        IIQRAgent(iqrAgentSC).createOrder(paymentId,amount);
+        // IRevenueManager(revenueSC).recordRevenue(agent,1,amount,"");
 
+    }
 }

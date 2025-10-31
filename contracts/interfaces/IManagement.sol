@@ -4,12 +4,15 @@ pragma solidity ^0.8.20;
 import "./IRestaurant.sol";
 
 interface IManagement {
-    // Basic functions that RestaurantOrder needs
-    // function isStaff(address account) external view returns (bool);
-    // function GetDishBasic(string memory code) external view returns (string memory name, uint price, bool available, bool active);
-    // function IsDishEnough(string memory code, uint quantity) external view returns (bool);
-    // function GetDiscountBasic(string memory code) external view returns (uint discountPercent, bool active, uint amountUsed, uint amountMax, uint from, uint to);
-    // function UpdateDiscountCodeUsed(string memory code) external;
+    function CreateStaff(
+        Staff memory staff
+    )external;
+    function CreatePosition(string memory _name, STAFF_ROLE[] memory _roles)external;
+    function CreateWorkingShift(
+        string memory _title,
+        uint256 from,   //số giây tính từ 0h ngày hôm đó. vd 08:00 là 8*3600=28800
+        uint256 to
+    ) external returns(uint256);
     function checkRole(STAFF_ROLE role,address user)external view returns(bool rightRole);
     // Restaurant info
     function GetRestaurantInfo() external view returns (RestaurantInfo memory);
@@ -87,7 +90,16 @@ interface IManagement {
     function isStaff(address account) external view returns (bool);
     function GetDishBasic(string memory code) external view returns (string memory name, bool available, bool active,string memory imgUrl);
     function IsDishEnough(string memory code, uint quantity) external view returns (bool);
-    function GetDiscountBasic(string memory code) external view returns (uint discountPercent, bool active, uint amountUsed, uint amountMax, uint from, uint to);
+    function GetDiscountBasic(string memory code) external view returns (
+        uint discountPercent, 
+        bool active, 
+        uint amountUsed, 
+        uint amountMax, 
+        uint from, 
+        uint to,
+        DiscountType discountType,
+        bytes32[] memory targetGroupIds
+    );   
     function UpdateDiscountCodeUsed(string memory code) external;
     function getWorkingShifts() external view returns(WorkingShift[] memory);
     function updateAverageStarDish(uint8 _newStar, string memory _codeDish) external;
@@ -110,8 +122,14 @@ interface IManagement {
     );
     function UpdateTotalRevenueReport(uint createdAt, uint addRevenue) external ;
     function hasRole(bytes32 role, address account) external view returns (bool);
-}
+    function setStaffAgentStore(address _staffAgentSC)external ;
+    function grantRole(bytes32 role, address account) external;
+    }
 interface ICardTokenManager {
     function getPoolInfo(string memory _transactionID) external view returns(PoolInfo memory);
     function getTx(string memory txID)external view returns(TransactionStatus memory transaction);
 }
+interface IOrder {
+    function isValidAmount(bytes32 _paymentId,uint _amount)external view returns(bool);
+}
+

@@ -10,6 +10,8 @@ struct IQRContracts {
     address Report;
     address TimeKeeping;
     address owner;      
+    address StaffAgentStore;
+    address Points;
 }
 struct AgentInfo {
     address walletAddress;
@@ -33,6 +35,7 @@ struct Agent {
     uint256 updatedAt;
     bool isActive;
     bool exists;
+    string domain;
 }
 
 struct MeOSLicense {
@@ -51,12 +54,12 @@ struct MTDStats {
 }
 
 struct AgentOrder {
-    uint256 orderId;
-    address customer;
+    bytes32 paymentId;
+    // address customer;
     uint256 amount;
     uint256 timestamp;
-    bool completed;
-    string metadata;
+    // bool completed;
+    // string metadata;
 }
 
 struct Revenue {
@@ -135,15 +138,21 @@ struct License {
 
 interface IIQRFactory {
     function createAgentIQR(address _agent) external returns (address);
-    function getAgentIQRContract(address _agent) external view returns (address);
-}
+    function getAgentIQRContract(address _agent) external view returns (address);    
+    function setAgentIQR( address _agent)external ;
+    function setPointsIQRFactory(address _agent, address _Points) external;
+    function transferOwnerIQRContracts(address _agent)external;
+    function getIQRSCByAgentFromFactory(address _agent) external view returns (IQRContracts memory);
 
+}
 interface ILoyaltyFactory {
     function createAgentLoyalty(address _agent) external returns (address);
     function getAgentLoyaltyContract(address _agent) external view returns (address);
+    function setPointsLoyaltyFactory(address _agent, address _Management,address _Order) external returns(address) ;
+    function transferOwnerPointSC(address _agent, address POINTS_PROXY)external;
 }
 
-interface IAgentLoyalty {
+interface IRestaurantLoyaltySystem {
     function totalSupply() external view returns (uint256);
     function freeze() external;
     function unfreeze() external;
@@ -160,6 +169,15 @@ interface IAgentIQR {
     function getTotalRevenue() external view returns (uint256);
     function deactivate() external;
     function isActive() external view returns (bool);
+    function getIQRSCByAgent(address _agent) external view returns(IQRContracts memory);
+    function transferOwnerIQR(
+        address _agent,
+        address _MANAGEMENT,
+        address _ORDER,
+        address _REPORT,
+        address _TIMEKEEPING
+
+    )external ;
 }
 
 interface IRevenueManager {
@@ -182,3 +200,42 @@ interface IAgentManagement {
     function getActiveAgents() external view returns (address[] memory);
     function getSubLocationCount(address _agent) external view returns (uint256);
 }
+interface IORDER {
+    function setConfig(address _management,address _merchant,address _cardVisa,uint8 _taxPercent,address _noti,address _report) external;
+    function transferOwnership(address newOwner) external ;
+    // function owner() external returns (address);
+    function setIQRAgent(address _iqrAgentSC,address _agent, address revenueManager) external;
+    function initialize() external;
+    function setPointSC (address _pointSC) external;
+}
+interface IMANAGEMENT {
+    function setRestaurantOrder(address _restaurantOrder) external;
+    function setReport(address _report) external;
+    function setTimeKeeping(address _timeKeeping) external;
+    function transferOwnership(address newOwner) external ;
+    function setStaffAgentStore(address _staffAgentSC)external;
+    function setAgentAdd(address _agent) external ;
+    function grantRole(bytes32 role, address account) external;
+    function initialize() external;
+    function setPoints(address _points) external;
+}
+interface IREPORT {
+    function transferOwnership(address newOwner) external ;
+    function setManagement(address _management) external ;
+    function initialize(address management) external;
+}
+interface ITIMEKEEPING {
+    function transferOwnership(address newOwner) external ;
+    function setManagement(address _managementContract) external ;
+    function initialize(address management) external;
+}
+interface IEnhancedAgent {
+    function CheckAgentExisted(address _agent)external view returns(bool);
+}
+interface IStaffAgentStore {
+    function setManagement(address _management) external;
+    function setAgent(address user, address agent) external;
+}
+// interface IPoint {
+
+// }

@@ -8,6 +8,8 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "./interfaces/IReport.sol";
 import "./interfaces/IRestaurant.sol";
 import "./interfaces/ITimeKeeping.sol";
+import "./interfaces/IAgent.sol";
+import "./interfaces/IPoint.sol";
 // import "forge-std/console.sol";
 
 contract Management is    
@@ -92,8 +94,17 @@ contract Management is
     address public report;
     mapping(string =>RankReport[]) public mDishCodeToRankReport;
     mapping(string => uint) public dishOrderIndex;
+    mapping(uint => Table[]) public mAreaToTable; //area id => table 
+    mapping(uint => Area) public mIdToArea;
+    Area[] public areas;
+    mapping(uint => uint) public mTableToAreaId;
+    address public agent;
+    IStaffAgentStore public staffAgentStore;
+    IPoint public POINTS;
+    mapping(string => mapping(address => bool)) public voucherRedeemed; // code => user => đã redeem chưa
+
     // Reserve storage for upgradeability
-    uint256[10] private __gap;
+    uint256[50] private __gap;
 
     constructor() {
         _disableInitializers();
@@ -109,9 +120,19 @@ contract Management is
         require(msg.sender == restaurantOrder,"only restaurantOrder can call");
         _;
     }
+    function setStaffAgentStore(address _staffAgentSC)external onlyRole(ROLE_ADMIN){
+        staffAgentStore = IStaffAgentStore(_staffAgentSC);
+    }
+    function setAgentAdd(address _agent) external onlyRole(ROLE_ADMIN){
+        agent = _agent;
+    }
     function setTimeKeeping(address _timeKeeping) external onlyRole(ROLE_ADMIN) {
         timeKeeping = _timeKeeping;
     }
+    function setPoints(address _points) external onlyRole(ROLE_ADMIN) {
+        POINTS = IPoint(_points);
+    }
+
     function checkRole(STAFF_ROLE role,address user)public view returns(bool rightRole){
         if(hasRole(ROLE_ADMIN, user) || hasRole(_getRoleHash(role), user) || user == timeKeeping){
             return true;
@@ -202,6 +223,7 @@ contract Management is
         require(bytes(staff.position).length > 0, "position is empty");
         require(bytes(mPosition[staff.position].name).length > 0, "position not found");
         require(staff.roles.length > 0, "staff roles is empty");
+        // require(address(staffAgentStore) != address(0),"IStaffAgentStore not set yet");
         // Kiểm tra tất cả roles của staff có nằm trong roles được phép của position
         // _validateStaffRoles(staff.position, staff.roles);
 
@@ -221,6 +243,13 @@ contract Management is
             bytes32 roleHash = _getRoleHash(staff.roles[idx]);
             _grantRole(roleHash, staff.wallet);
         }    
+        if(address(staffAgentStore) != address(0) && agent != address(0)){
+            staffAgentStore.setAgent(staff.wallet,agent);
+
+        }
+    }
+    function getAgentFromStaff(address _staffWallet)external view returns(address){
+
     }
     // Hàm helper để validate roles của staff
     function _validateStaffRoles(string memory _position, STAFF_ROLE[] memory _staffRoles) 
@@ -385,7 +414,8 @@ contract Management is
         result = new Staff[](size);
 
         for (uint256 i = 0; i < size; i++) {
-            result[i] = staffs[offset + i];
+            uint256 reverseIndex = staffs.length - 1 - offset - i;
+            result[i] = staffs[reverseIndex];
         }
 
         return (result,staffs.length);
@@ -577,13 +607,87 @@ contract Management is
         
         return result;
     }
+    
+    //Area management
+    function CreateArea(uint _id,string memory _name)external onlyAdminAndRole(STAFF_ROLE.TABLE_MANAGE){
+        require(_id != 0,"Area id can not be 0");
+        require(mIdToArea[_id].id == 0,"this id existed");
+        Area memory area = Area({
+            id: _id,
+            name: _name
+        });
+        mIdToArea[_id] = area;
+        areas.push(area);
+    }
+    function getAllAreas() external returns(Area[] memory){
+        return areas;
+    }
+    function GetAllAreasPagination(uint256 offset, uint256 limit)
+        external
+        view
+        returns (Area[] memory result,uint totalCount)
+    {
+        if(offset >= areas.length) {
+            return ( new Area[](0),areas.length);
+        }
 
+        uint256 end = offset + limit;
+        if (end > areas.length) {
+            end = areas.length;
+        }
+
+        uint256 size = end - offset;
+        result = new Area[](size);
+
+        for (uint256 i = 0; i < size; i++) {
+            uint256 reverseIndex = areas.length - 1 - offset - i;
+            result[i] = areas[reverseIndex];
+        }
+
+        return (result,areas.length);
+    }
+
+
+    function getAreaById(uint _id) external returns(Area memory){
+        return mIdToArea[_id];
+    }
+    function deleteArea(uint _id) external onlyAdminAndRole(STAFF_ROLE.TABLE_MANAGE){
+        delete mIdToArea[_id];
+        for(uint i;i<areas.length;i++){
+            if(areas[i].id == _id){
+                areas[i] = areas[areas.length-1];
+                areas.pop();
+                break;
+            }
+        }
+        delete mAreaToTable[_id];
+    }
+    function updateArea(uint _id, string memory _newName) external onlyAdminAndRole(STAFF_ROLE.TABLE_MANAGE) {
+        // 1. Kiểm tra ID không được bằng 0
+        require(_id != 0, "Area id can not be 0");
+        
+        // 2. Kiểm tra Area phải tồn tại trước khi cập nhật
+        require(mIdToArea[_id].id != 0, "Area not found");
+        
+        // 3. Cập nhật tên trong mapping mIdToArea
+        mIdToArea[_id].name = _newName;
+        
+        // 4. Cập nhật tên trong mảng areas
+        for (uint i = 0; i < areas.length; i++) {
+            if (areas[i].id == _id) {
+                areas[i].name = _newName;
+                break; // Thoát vòng lặp ngay khi tìm thấy và cập nhật
+            }
+        }
+        
+    }
     // Table management
     function CreateTable(
         uint _number,
         uint _numPeople,
         bool _active,
-        string memory _name
+        string memory _name,
+        uint _areaId
     )external onlyAdminAndRole(STAFF_ROLE.TABLE_MANAGE){
         require(_number != 0,"Table number can not be 0");
         require(mNumberToTable[_number].number == 0,"this number existed");
@@ -597,7 +701,37 @@ contract Management is
         });
         mNumberToTable[_number] = table;
         tables.push(table);
+        mAreaToTable[_areaId].push(table);
+        mTableToAreaId[_number] = _areaId;
     }
+    function getTablesByArea(uint _areaId) external view returns(Table[] memory){
+        return mAreaToTable[_areaId];
+    }
+    function GetTablesByAreaPagination(uint _areaId,uint256 offset, uint256 limit)
+        external
+        view
+        returns (Table[] memory result,uint totalCount)
+    {
+        if(offset >= mAreaToTable[_areaId].length) {
+            return ( new Table[](0),mAreaToTable[_areaId].length);
+        }
+
+        uint256 end = offset + limit;
+        if (end > mAreaToTable[_areaId].length) {
+            end = mAreaToTable[_areaId].length;
+        }
+
+        uint256 size = end - offset;
+        result = new Table[](size);
+
+        for (uint256 i = 0; i < size; i++) {
+            uint256 reverseIndex = mAreaToTable[_areaId].length - 1 - offset - i;
+            result[i] = mAreaToTable[_areaId][reverseIndex];
+        }
+
+        return (result,mAreaToTable[_areaId].length);
+    }
+
     function removeTable(uint _number)external onlyAdminAndRole(STAFF_ROLE.TABLE_MANAGE){
         for(uint i;i<tables.length;i++){
             if(tables[i].number == _number){
@@ -605,7 +739,17 @@ contract Management is
                 tables.pop();
             }
         }
-        delete  mNumberToTable[_number];
+        delete  mNumberToTable[_number];        
+        uint areaId = mTableToAreaId[_number];
+        Table[] storage tablesArea = mAreaToTable[areaId];
+        for (uint i; i<tablesArea.length;i++ ){
+            if(tablesArea[i].number == _number){
+                tablesArea[i] = tablesArea[tablesArea.length -1];
+                tablesArea.pop();
+                break;
+            }
+        }
+        delete mTableToAreaId[_number];
     }
 
 
@@ -613,7 +757,8 @@ contract Management is
         uint _number,
         uint _numPeople,
         bool _active,
-        string memory _name
+        string memory _name,
+        uint _newAreaId
     )external onlyAdminAndRole(STAFF_ROLE.TABLE_MANAGE) returns(bool){
         require(_number != 0,"Table number can not be 0");
         require(mNumberToTable[_number].number != 0,"this number table does not exist");
@@ -624,6 +769,19 @@ contract Management is
             if(keccak256(abi.encodePacked(tables[i].number ))== keccak256(abi.encodePacked(_number))){
                 tables[i] = mNumberToTable[_number];
             }
+        }
+        if(_newAreaId >0){
+            require(mIdToArea[_newAreaId].id != 0,"this area id does not exist");
+            uint oldAreaId = mTableToAreaId[_number];        
+            mAreaToTable[_newAreaId].push(mNumberToTable[_number]);
+            Table[] storage tablesArea = mAreaToTable[oldAreaId];
+            for(uint i; i<tablesArea.length ;i++){
+                if(tablesArea[i].number == _number){
+                    tablesArea[i] = tablesArea[tablesArea.length -1];
+                    tablesArea.pop();
+                }
+            }
+
         }
         return true;
     }
@@ -717,8 +875,9 @@ contract Management is
         dishCounts = new uint[](size);
 
         for (uint256 i = 0; i < size; i++) {
-            categoryArr[i] =categories[offset +i];
-            dishCounts[i]=mCodeCatToDishes[categories[offset +i].code].length;
+            uint256 reverseIndex = length - 1 - offset - i;
+            categoryArr[i] =categories[reverseIndex];
+            dishCounts[i]=mCodeCatToDishes[categories[reverseIndex].code].length;
         }
 
         return (categoryArr,dishCounts,length);
@@ -1325,7 +1484,8 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
         productsInfo = new DishInfo[](size);
 
         for (uint256 i = 0; i < size; i++) {
-            productsInfo[i] = getDishInfo(mCodeCatToDishes[_codeCategory][offset +i].code);
+            uint256 reverseIndex = length - 1 - offset - i;
+            productsInfo[i] = getDishInfo(mCodeCatToDishes[_codeCategory][reverseIndex].code);
         }
 
         return (productsInfo,length);
@@ -1874,10 +2034,30 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
         uint _to,
         bool _active,
         string memory _imgURL,
-        uint _amountMax
+        uint _amountMax,
+        DiscountType _discountType,
+        bytes32[] memory _targetGroupIds,
+        uint _pointCost,
+        bool _isRedeemable
     )external onlyRole(ROLE_ADMIN){
         require(bytes(_code).length >0,"code of discount can not be empty");
         require(bytes(mCodeToDiscount[_code].code).length == 0,"code of discount existed");
+        require(_discountPercent > 0 && _discountPercent <= 100, "Invalid discount percent");
+        require(_from < _to, "Invalid time range");
+         // Validate theo loại discount
+        if (_discountType == DiscountType.AUTO_GROUP) {
+            require(_targetGroupIds.length > 0, "Group IDs required for AUTO_GROUP");
+        }
+        
+        if (_isRedeemable) {
+            require(_pointCost > 0, "Point cost required for redeemable discount");
+            require(address(POINTS) != address(0),"POINTS contract not set yet");
+            for(uint i; i <_targetGroupIds.length; i++ ){
+                require(POINTS.isMemberGroupId(_targetGroupIds[i]),"membergroup id is wrong");
+            }
+
+        }
+
         mCodeToDiscount[_code] = Discount({
             code: _code ,
             name: _name ,
@@ -1889,7 +2069,11 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
             imgURL : _imgURL,
             amountMax : _amountMax,
             amountUsed : 0,
-            updatedAt  : block.timestamp
+            updatedAt  : block.timestamp,
+            discountType: _discountType,
+            targetGroupIds: _targetGroupIds,
+            pointCost: _pointCost,
+            isRedeemable: _isRedeemable
         });
         discounts.push(mCodeToDiscount[_code]);
     }
@@ -1912,7 +2096,11 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
         uint _to,
         bool _active,
         string memory _imgURL,
-        uint _amountMax
+        uint _amountMax,
+        DiscountType _discountType,
+        bytes32[] memory _targetGroupIds,
+        uint _pointCost,
+        bool _isRedeemable
     )external onlyRole(ROLE_ADMIN){
         require(bytes(_code).length >0,"code of discount can not be empty");
         require(bytes(mCodeToDiscount[_code].code).length > 0,"can not find any discount");
@@ -1921,6 +2109,13 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
         require(_from >= block.timestamp && _to > block.timestamp,"time is not valid");
         require(_amountMax >= mCodeToDiscount[_code].amountUsed , 
                 "number of maximum can not be less than number discount used");
+         if (_discountType == DiscountType.AUTO_GROUP) {
+            require(_targetGroupIds.length > 0, "Group IDs required");
+        }
+        
+        if (_isRedeemable) {
+            require(_pointCost > 0, "Point cost required");
+        }
         mCodeToDiscount[_code].name = _name;
         mCodeToDiscount[_code].discountPercent = _discountPercent;
         mCodeToDiscount[_code].desc = _desc;
@@ -1929,13 +2124,37 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
         mCodeToDiscount[_code].active = _active;
         mCodeToDiscount[_code].imgURL = _imgURL;
         mCodeToDiscount[_code].amountMax = _amountMax;
+        mCodeToDiscount[_code].discountType = _discountType;
+        mCodeToDiscount[_code].targetGroupIds = _targetGroupIds;
+        mCodeToDiscount[_code].pointCost = _pointCost;
+        mCodeToDiscount[_code].isRedeemable = _isRedeemable;
+        mCodeToDiscount[_code].updatedAt = block.timestamp;
         for(uint i;i<discounts.length;i++){
             if(keccak256(abi.encodePacked(discounts[i].code ))== keccak256(abi.encodePacked(_code))){
                 discounts[i] = mCodeToDiscount[_code];
             }
         }
     }
-    
+    // Hàm để member redeem voucher bằng điểm
+    function RedeemVoucher(string memory _code) external returns (bool) {
+        Discount storage discount = mCodeToDiscount[_code];
+        
+        require(bytes(discount.code).length > 0, "Discount not found");
+        require(discount.active, "Discount inactive");
+        require(discount.isRedeemable, "Discount not redeemable");
+        require(block.timestamp >= discount.from && block.timestamp <= discount.to, "Discount expired");
+        require(discount.amountUsed < discount.amountMax, "Discount limit reached");
+        require(!voucherRedeemed[_code][msg.sender], "Already redeemed");
+        
+        // Gọi sang Point contract để trừ điểm
+        require(address(POINTS) != address(0), "POINTS contract not set yet");
+        POINTS.redeemVoucherPoints(msg.sender, discount.pointCost);
+        
+        voucherRedeemed[_code][msg.sender] = true;
+        discount.amountUsed++;
+        
+        return true;
+    }
     function UpdateDiscountCodeUsed(string memory _code)external{
         mCodeToDiscount[_code].amountUsed += 1;
         for(uint i;i<discounts.length;i++){
@@ -1945,9 +2164,118 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
         }
     }
         // Function for RestaurantOrder to get basic discount info
-    function GetDiscountBasic(string memory code) external view returns (uint discountPercent, bool active, uint amountUsed, uint amountMax, uint from, uint to) {
+    function GetDiscountBasic(string memory code) external view returns (
+        uint discountPercent, 
+        bool active, 
+        uint amountUsed, 
+        uint amountMax, 
+        uint from, 
+        uint to,
+        DiscountType discountType,
+        bytes32[] memory targetGroupIds
+    ) {
         Discount memory discount = mCodeToDiscount[code];
-        return (discount.discountPercent, discount.active, discount.amountUsed, discount.amountMax, discount.from, discount.to);
+        return (
+            discount.discountPercent, 
+            discount.active, 
+            discount.amountUsed, 
+            discount.amountMax, 
+            discount.from, 
+            discount.to,
+            discount.discountType,
+            discount.targetGroupIds
+        );
+    }
+    // Lấy danh sách discounts tự động(all+ group) cho user
+    function GetAutoDiscountsForUser(address _user, bytes32 _userGroup) external view returns (Discount[] memory) {
+        uint count = 0;
+        
+        // Đếm số discounts hợp lệ
+        for (uint i = 0; i < discounts.length; i++) {
+            Discount memory d = discounts[i];
+            if (_isDiscountApplicableForUser(d, _user, _userGroup)) {
+                count++;
+            }
+        }
+        
+        Discount[] memory result = new Discount[](count);
+        uint index = 0;
+        
+        for (uint i = 0; i < discounts.length; i++) {
+            Discount memory d = discounts[i];
+            if (_isDiscountApplicableForUser(d, _user, _userGroup)) {
+                result[index] = d;
+                index++;
+            }
+        }
+        
+        return result;
+    }
+
+    function _isDiscountApplicableForUser(
+        Discount memory d,
+        address _user,
+        bytes32 _userGroup
+    ) internal view returns (bool) {
+        if (!d.active) return false;
+        if (block.timestamp < d.from || block.timestamp > d.to) return false;
+        if (d.amountUsed >= d.amountMax) return false;
+        
+        // Check discount type
+        if (d.discountType == DiscountType.AUTO_ALL) {
+            return true;
+        }
+        
+        if (d.discountType == DiscountType.AUTO_GROUP) {
+            for (uint i = 0; i < d.targetGroupIds.length; i++) {
+                if (d.targetGroupIds[i] == _userGroup) {
+                    return true;
+                }
+            }
+        }
+        
+        return false;
+    }
+        // Lấy danh sách discounts tự động(all) cho user
+    function GetAutoDiscountsTypeAllForUser(address _user) external view returns (Discount[] memory) {
+        uint count = 0;
+        
+        // Đếm số discounts hợp lệ
+        for (uint i = 0; i < discounts.length; i++) {
+            Discount memory d = discounts[i];
+            if (_isDiscountAllApplicableForUser(d, _user)) {
+                count++;
+            }
+        }
+        
+        Discount[] memory result = new Discount[](count);
+        uint index = 0;
+        
+        for (uint i = 0; i < discounts.length; i++) {
+            Discount memory d = discounts[i];
+            if (_isDiscountAllApplicableForUser(d, _user)) {
+                result[index] = d;
+                index++;
+            }
+        }
+        
+        return result;
+    }
+
+    function _isDiscountAllApplicableForUser(
+        Discount memory d,
+        address _user
+    ) internal view returns (bool) {
+        if (!d.active) return false;
+        if (block.timestamp < d.from || block.timestamp > d.to) return false;
+        if (d.amountUsed >= d.amountMax) return false;
+        
+        // Check discount type
+        if (d.discountType == DiscountType.AUTO_ALL) {
+            return true;
+        }
+        
+        return false;
     }
 
     function GetDiscount(
@@ -2100,10 +2428,17 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
         string memory _linkTo,
         bool active,
         uint from,
-        uint to
+        uint to,
+        BannerPosition _location,
+        LinkBannerType _type
     ) external onlyRole(ROLE_ADMIN) returns(uint256){
+        if(_type == LinkBannerType.WRITING){ 
+            require(bytes(_description).length >0,"this banner type need description");
+        }else{
+             require(bytes(_description).length == 0,"this banner type has no description");
+        }
         uint256 newId = banners.length + 1;
-        banners.push(Banner(newId,_name,_linkImg,_description,_linkTo,active,from, to));
+        banners.push(Banner(newId,_name,_linkImg,_description,_linkTo,active,from, to,_location));
         return newId;
     }
     function RemoveBanner(uint256 id) external onlyRole(ROLE_ADMIN) {
@@ -2121,6 +2456,7 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
         bool _active,
         uint _from,
         uint _to,
+        BannerPosition _location,
         uint256 id
     ) external onlyRole(ROLE_ADMIN){
         uint256 index = findBannerIndex(id);
@@ -2146,6 +2482,7 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
             banner.to = _to;
         }
         banner.active = _active; 
+        banner.location = _location;
     }
     function getBanners() external view returns(Banner[] memory){
         return banners;

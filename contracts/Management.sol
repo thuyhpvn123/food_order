@@ -102,9 +102,10 @@ contract Management is
     IStaffAgentStore public staffAgentStore;
     IPoint public POINTS;
     mapping(string => mapping(address => bool)) public voucherRedeemed; // code => user => đã redeem chưa
-
+    mapping(string => uint)mDishRemain;
     // Reserve storage for upgradeability
     uint256[50] private __gap;
+    mapping(string => DishOption[]) public mDishCodeToOptions;
 
     constructor() {
         _disableInitializers();
@@ -810,6 +811,7 @@ contract Management is
         cat.desc= category.desc;
         cat.active= category.active;
         cat.imgUrl= category.imgUrl;
+        cat.icon = category.icon;
         categories.push(cat);
         isCodeExist[cat.code] = true;
     }
@@ -829,7 +831,8 @@ contract Management is
         uint _rank,
         string memory _desc,
         bool _active,
-        string memory _imgUrl
+        string memory _imgUrl,
+        string memory _icon
     )external onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE) returns(bool){
         require(bytes(_code).length >0,"category code can not be empty");
         require(bytes(mCodeToCat[_code].code).length > 0,"category code does not exist");
@@ -839,6 +842,7 @@ contract Management is
         category.desc = _desc;
         category.active = _active;
         category.imgUrl = _imgUrl;
+        category.icon = _icon;
         for(uint i;i<categories.length;i++){
             if(keccak256(abi.encodePacked(categories[i].code ))== keccak256(abi.encodePacked(_code))){
                 categories[i] = category;
@@ -2849,5 +2853,251 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
         }
         return false;
     }
+    //DishOptions Management
+    // ================= CREATE DISH OPTIONS (UPDATED) =================
+    function CreateDishOptions(
+        string memory dishCode,
+        string memory _optionName,
+        string[] memory _featureNames,
+        uint256[] memory _featurePrices,
+        bool _isCompulsory,
+        uint _maximumSelection
+    ) external onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE) {
+        require(bytes(_optionName).length > 0, "option name is required");
+        require(_featureNames.length > 0, "features is required");
+        require(_featureNames.length == _featurePrices.length, "features and prices length mismatch");
+        require(_maximumSelection > 0, "maximum selection is required");
+        require(_isCompulsory == false || _maximumSelection >= 1, "maximum selection must be at least 1 if option is compulsory");
+        
+        bytes32 _optionId = keccak256(abi.encodePacked(block.timestamp, dishCode, _optionName));
 
+        DishOption storage newOption = mDishCodeToOptions[dishCode].push();
+        newOption.optionId = _optionId;
+        newOption.optionName = _optionName;
+        newOption.isCompulsory = _isCompulsory;
+        newOption.maximumSelection = _maximumSelection;
+        
+        // Create features with unique IDs
+        for (uint i = 0; i < _featureNames.length; i++) {
+            bytes32 featureId = keccak256(abi.encodePacked(_optionId, _featureNames[i], i));
+            newOption.features.push(OptionFeature({
+                featureId: featureId,
+                featureName: _featureNames[i],
+                featurePrice: _featurePrices[i]
+            }));
+        }
+    }
+
+    // Update DishOption by optionId
+    function updateDishOption(
+        string memory _dishCode,
+        bytes32 _optionId,
+        string memory _optionName,
+        string[] memory _featureNames,
+        uint256[] memory _featurePrices,
+        bool _isCompulsory,
+        uint _maximumSelection
+    ) external onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE) {
+        require(bytes(_optionName).length > 0, "option name is required");
+        require(_featureNames.length > 0, "features is required");
+        require(_featureNames.length == _featurePrices.length, "features and prices length mismatch");
+        require(_maximumSelection > 0, "maximum selection is required");
+        require(!_isCompulsory || _maximumSelection >= 1, "max selection at least 1 if compulsory");
+        
+        DishOption[] storage dishOptions = mDishCodeToOptions[_dishCode];
+        require(dishOptions.length > 0, "Dish not found");
+
+        bool found = false;
+        for (uint i = 0; i < dishOptions.length; i++) {
+            if (dishOptions[i].optionId == _optionId) {
+                dishOptions[i].optionName = _optionName;
+                dishOptions[i].isCompulsory = _isCompulsory;
+                dishOptions[i].maximumSelection = _maximumSelection;
+                
+                // Reset and rebuild features
+                delete dishOptions[i].features;
+                for (uint j = 0; j < _featureNames.length; j++) {
+                    bytes32 featureId = keccak256(abi.encodePacked(_optionId, _featureNames[j], j));
+                    dishOptions[i].features.push(OptionFeature({
+                        featureId: featureId,
+                        featureName: _featureNames[j],
+                        featurePrice: _featurePrices[j]
+                    }));
+                }
+                found = true;
+                break;
+            }
+        }
+        require(found, "DishOption not found");
+    }
+    // Delete DishOption by optionId
+    function DeleteDishOption(string memory dishCode, bytes32 optionId)
+        external
+        onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE)
+    {
+        DishOption[] storage options = mDishCodeToOptions[dishCode];
+        bool found = false;
+
+        for (uint i = 0; i < options.length; i++) {
+            if (options[i].optionId == optionId) {
+                // xóa phần tử i bằng cách swap với phần tử cuối
+                options[i] = options[options.length - 1];
+                options.pop();
+                found = true;
+                break;
+            }
+        }
+
+        require(found, "option not found");
+    }
+    function GetDishOptionById(
+        string memory dishCode,
+        bytes32 optionId
+    ) external view returns (DishOption memory) {
+        DishOption[] storage options = mDishCodeToOptions[dishCode];
+        for (uint i = 0; i < options.length; i++) {
+            if (options[i].optionId == optionId) {
+                return options[i];
+            }
+        }
+        revert("option not found");
+    }
+    function GetDishOptionByIds(
+        string memory dishCode,
+        bytes32[] memory optionIds
+    ) external view returns (DishOption[] memory) {
+        require(optionIds.length > 0, "optionIds array cannot be empty");
+        
+        DishOption[] storage allOptions = mDishCodeToOptions[dishCode];
+        DishOption[] memory result = new DishOption[](optionIds.length);
+        
+        for (uint i = 0; i < optionIds.length; i++) {
+            bool found = false;
+            for (uint j = 0; j < allOptions.length; j++) {
+                if (allOptions[j].optionId == optionIds[i]) {
+                    result[i] = allOptions[j];
+                    found = true;
+                    break;
+                }
+            }
+            require(found, "Option not found");
+        }
+        return result;
+    }   
+    // ------------------- GET ALL PAGINATION -------------------
+    function GetAllDishOptionsFromDishCodePagination(
+        string memory dishCode,
+        uint offset,
+        uint limit
+    ) external view returns (DishOption[] memory, uint totalCount) {
+        DishOption[] storage allOptions = mDishCodeToOptions[dishCode];
+        totalCount = allOptions.length;
+
+        if (offset >= totalCount) {
+            return (new DishOption[](0) , totalCount);
+        }
+
+        uint end = offset + limit;
+        if (end > totalCount) end = totalCount;
+        uint count = end - offset;
+
+        DishOption[] memory result = new DishOption[](count);
+        for (uint i = 0; i < count; i++) {
+            uint reverseIndex = totalCount -1 - offset - i;
+            result[i] = allOptions[reverseIndex];
+        }
+
+        return (result, totalCount);
+    }
+
+    function CalculateAndValidateOptions(
+            string memory dishCode,
+            SelectedOption[] memory selectedOptions
+    ) external view returns (uint totalOptionsPrice, string[] memory featureNames) {
+        DishOption[] storage allOptions = mDishCodeToOptions[dishCode];
+        
+        // Count total features to initialize array
+        uint totalFeaturesCount = 0;
+        for (uint i = 0; i < selectedOptions.length; i++) {
+            totalFeaturesCount += selectedOptions[i].selectedFeatureIds.length;
+        }
+        
+        featureNames = new string[](totalFeaturesCount);
+        uint featureIndex = 0;
+        
+        if (selectedOptions.length == 0) {
+            // Check if there are any compulsory options
+            for (uint i = 0; i < allOptions.length; i++) {
+                require(!allOptions[i].isCompulsory, 
+                    string(abi.encodePacked("Compulsory option missing: ", allOptions[i].optionName)));
+            }
+            return (0, featureNames);
+        }
+        
+        // Create bitmap to track which compulsory options are selected (max 256 options)
+        uint256 compulsoryBitmap = 0;
+        uint compulsoryCount = 0;
+        
+        // First pass: identify compulsory options and create bitmap
+        for (uint i = 0; i < allOptions.length; i++) {
+            if (allOptions[i].isCompulsory) {
+                compulsoryBitmap |= (1 << i);
+                compulsoryCount++;
+            }
+        }
+        
+        uint selectedCompulsoryCount = 0;
+        
+        // Second pass: process selected options (validate + calculate price + collect feature names)
+        for (uint i = 0; i < selectedOptions.length; i++) {
+            bytes32 optionId = selectedOptions[i].optionId;
+            bytes32[] memory featureIds = selectedOptions[i].selectedFeatureIds;
+            uint featureCount = featureIds.length;
+            
+            require(featureCount > 0, "Option must have at least one feature selected");
+            
+            // Find the option (only once per selected option)
+            bool optionFound = false;
+            for (uint j = 0; j < allOptions.length; j++) {
+                if (allOptions[j].optionId == optionId) {
+                    optionFound = true;
+                    
+                    // Check if this is a compulsory option
+                    if ((compulsoryBitmap & (1 << j)) != 0) {
+                        selectedCompulsoryCount++;
+                    }
+                    
+                    // Validate maximum selection
+                    require(featureCount <= allOptions[j].maximumSelection, 
+                        "Exceeded maximum selection");
+                    
+                    // Calculate price, validate features, and collect feature names in single loop
+                    OptionFeature[] storage features = allOptions[j].features;
+                    uint featuresLength = features.length;
+                    
+                    for (uint k = 0; k < featureCount; k++) {
+                        bool featureFound = false;
+                        bytes32 searchFeatureId = featureIds[k];
+                        
+                        // Search features
+                        for (uint l = 0; l < featuresLength; l++) {
+                            if (features[l].featureId == searchFeatureId) {
+                                totalOptionsPrice += features[l].featurePrice;
+                                featureNames[featureIndex] = features[l].featureName;
+                                featureIndex++;
+                                featureFound = true;
+                                break;
+                            }
+                        }
+                        require(featureFound, "Invalid feature ID");
+                    }
+                    break;
+                }
+            }
+            require(optionFound, "Option not found");
+        }
+        
+        // Final check: all compulsory options must be selected
+        require(selectedCompulsoryCount == compulsoryCount, "Some compulsory options are missing");
+    }
 }

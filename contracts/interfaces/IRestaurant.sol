@@ -99,6 +99,7 @@ struct Category {
     string desc;
     bool active;
     string imgUrl;
+    string icon;
 }   
 
 struct DishInfo {
@@ -162,6 +163,7 @@ struct SimpleCourse {
     COURSE_STATUS status;
     string imgUrl;
     string note;
+    string[] featureNames;
 }
 
 struct Order {
@@ -507,6 +509,23 @@ struct NewDish {
 struct RankReport{
     uint createdAt;
     uint rank;
+}
+
+struct OptionFeature {
+    bytes32 featureId;
+    string featureName;
+    uint256 featurePrice;
+}
+struct DishOption {
+    bytes32 optionId;
+    string optionName;
+    OptionFeature[] features;
+    bool isCompulsory;
+    uint maximumSelection;
+}
+struct SelectedOption {
+    bytes32 optionId;
+    bytes32[] selectedFeatureIds;  // Multiple features can be selected per option
 }
 
 

@@ -124,7 +124,12 @@ interface IManagement {
     function hasRole(bytes32 role, address account) external view returns (bool);
     function setStaffAgentStore(address _staffAgentSC)external ;
     function grantRole(bytes32 role, address account) external;
-    }
+    function CalculateAndValidateOptions(
+        string memory dishCode,
+        SelectedOption[] memory selectedOptions
+    ) external view returns (uint totalOptionsPrice, string[] memory featureNames);
+
+}
 interface ICardTokenManager {
     function getPoolInfo(string memory _transactionID) external view returns(PoolInfo memory);
     function getTx(string memory txID)external view returns(TransactionStatus memory transaction);

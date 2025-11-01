@@ -212,10 +212,12 @@ contract RestaurantOrder is
         string[] memory dishCodes,
         uint8[] memory quantities,
         string[] memory notes,
-        bytes32[] memory variantIDs
+        bytes32[] memory variantIDs,
+        SelectedOption[][] memory dishSelectedOptions 
     ) external returns (bytes32 orderId) {
         require(dishCodes.length == quantities.length, "Array length mismatch");
-        require(dishCodes.length <= 20, "Too many dishes"); // Limit to prevent stack issues
+        // require(dishCodes.length <= 20, "Too many dishes"); // Limit to prevent stack issues
+        require(dishCodes.length == dishSelectedOptions.length, "dishOptionIds length mismatch");
 
         // Create order
         orderId = keccak256(abi.encodePacked(table, block.timestamp, dishCodes.length));
@@ -230,7 +232,7 @@ contract RestaurantOrder is
         mOrderIdToOrder[orderId] = order;
         tableOrders[table].push(order);
         // Process courses and calculate total
-        uint totalPrice = _processCourses(table, orderId, dishCodes, quantities, notes,variantIDs);
+        uint totalPrice = _processCourses(table, orderId, dishCodes, quantities, notes,variantIDs,dishSelectedOptions);
         
         // Create or update payment
         _createOrUpdatePayment(table,order.id, totalPrice);
@@ -246,12 +248,22 @@ contract RestaurantOrder is
         string[] memory dishCodes,
         uint8[] memory quantities,
         string[] memory notes,
-        bytes32[] memory variantIDs
+        bytes32[] memory variantIDs,
+        SelectedOption[][] memory dishSelectedOptions
     ) internal returns (uint totalPrice) {
         uint courseIdStart = mTableToCourses[table].length + 1;
         
         for (uint i = 0; i < dishCodes.length; i++) {
-            totalPrice += _addCourse(table, orderId, courseIdStart + i, dishCodes[i], quantities[i], notes[i],variantIDs[i]);
+            totalPrice += _addCourse(
+                table, 
+                orderId, 
+                courseIdStart + i, 
+                dishCodes[i], 
+                quantities[i], 
+                notes[i],
+                variantIDs[i],
+                dishSelectedOptions[i] 
+            );
         }
     }
     function _addCourse(
@@ -261,7 +273,8 @@ contract RestaurantOrder is
         string memory dishCode,
         uint8 quantity,
         string memory note,
-        bytes32 variantID
+        bytes32 variantID,
+        SelectedOption[] memory selectedOptions
     ) internal returns (uint coursePrice) {
         // Get dish info
         require(quantity >0,"quantity can be zero");
@@ -274,16 +287,22 @@ contract RestaurantOrder is
         );
 
         // require(MANAGEMENT.IsDishEnough(dishCode, quantity), "Insufficient stock");
+    
+        // Calculate additional price from options
+         (uint optionsPrice, string[] memory featureNames) = MANAGEMENT.CalculateAndValidateOptions(dishCode, selectedOptions);
+        
+        // Validate compulsory options
         uint dishPrice = orderVariant.dishPrice;
         SimpleCourse memory course = SimpleCourse({
             id: courseId,
             dishCode: dishCode,
             dishName: dishName,
-            dishPrice: dishPrice,
+            dishPrice: dishPrice + optionsPrice,
             quantity: quantity,
             status: COURSE_STATUS.ORDERED,
             imgUrl:imgUrl,
-            note:note
+            note:note,
+            featureNames: featureNames
         });
         mOrderIdToCourses[orderId].push(course);
         mTableToCourses[table].push(course);
@@ -292,7 +311,7 @@ contract RestaurantOrder is
         mTableToCoursePrice[table][course.id] = coursePrice;
     }
 
-    function _createOrUpdatePayment(
+function _createOrUpdatePayment(
         uint table,
         bytes32 orderId,
         uint totalPrice

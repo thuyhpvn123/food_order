@@ -96,9 +96,9 @@ interface IManagement {
         uint amountUsed, 
         uint amountMax, 
         uint from, 
-        uint to,
-        DiscountType discountType,
-        bytes32[] memory targetGroupIds
+        uint to
+        // DiscountType discountType,
+        // bytes32[] memory targetGroupIds
     );   
     function UpdateDiscountCodeUsed(string memory code) external;
     function getWorkingShifts() external view returns(WorkingShift[] memory);
@@ -128,7 +128,7 @@ interface IManagement {
         string memory dishCode,
         SelectedOption[] memory selectedOptions
     ) external view returns (uint totalOptionsPrice, string[] memory featureNames);
-
+    function getDishOrderIndex(string memory dishCode) external view returns (uint) ;
 }
 interface ICardTokenManager {
     function getPoolInfo(string memory _transactionID) external view returns(PoolInfo memory);

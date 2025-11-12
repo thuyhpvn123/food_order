@@ -16,6 +16,7 @@ contract AgentIQR is OwnableUpgradeable {
     mapping( bytes32 => AgentOrder) public orders;
     bytes32[] public orderIds;
     address public ORDER;
+    address public MANAGEMENT;
     mapping(address => IQRContracts) public mAgentToIQR;
     address public enhancedAgent;
     address public iqrFactory;
@@ -96,6 +97,7 @@ contract AgentIQR is OwnableUpgradeable {
         });
         mAgentToIQR[_agent] = iqr;
         ORDER = address(ORDER_PROXY);
+        MANAGEMENT = address(MANAGEMENT_PROXY);
         // set(_agent,cloneManagement,cloneOrder,cloneReport,cloneTimekeeping,cardVisa,noti);
 
     }
@@ -124,6 +126,7 @@ contract AgentIQR is OwnableUpgradeable {
         IMANAGEMENT(_MANAGEMENT).setAgentAdd(_agent);
         IMANAGEMENT(_MANAGEMENT).grantRole(ROLE_ADMIN,_agent);
         IStaffAgentStore(_StaffAgentStore).setManagement(_MANAGEMENT);
+        IMANAGEMENT(_MANAGEMENT).setAgentIqrSC(address(this));
         // IMANAGEMENT(_MANAGEMENT).transferOwnership(_agent);
         // IORDER(_ORDER).transferOwnership(_agent);
         // IREPORT(_REPORT).transferOwnership(_agent);
@@ -136,6 +139,7 @@ contract AgentIQR is OwnableUpgradeable {
         require(iqr.Management != address(0) && iqr.Order != address(0),"iqr not set yet");
         mAgentToIQR[msg.sender].Points = _POINTS_PROXY;
         IMANAGEMENT(iqr.Management).setPoints(_POINTS_PROXY);
+        
         // IPoint(_POINTS_PROXY).setManagementSC(iqr.Management);
         // IPoint(_POINTS_PROXY).setOrder(iqr.Order);
         IORDER(iqr.Order).setPointSC(_POINTS_PROXY);
@@ -192,13 +196,16 @@ contract AgentIQR is OwnableUpgradeable {
     // }
     
     function deactivate() external {
-        require(msg.sender == enhancedAgent || msg.sender == agent , "Unauthorized");
+        require(msg.sender == enhancedAgent , "Unauthorized");
         isActive = false;
+        IMANAGEMENT(MANAGEMENT).setActive(false);
         emit ContractDeactivated(block.timestamp);
     }
     
-    function reactivate() external onlyOwner {
+    function reactivate() external  {
+        require(msg.sender == enhancedAgent  , "Unauthorized");
         isActive = true;
+        IMANAGEMENT(MANAGEMENT).setActive(true);
     }
     
     function getTotalRevenue() external view returns (uint256) {

@@ -92,7 +92,7 @@ contract AttendanceSystem is
         return TIMEZONE;
     }
 
-    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+    function _authorizeUpgrade(address newImplementation) internal override  {}
     
     // Modifiers
     modifier onlyBE() {

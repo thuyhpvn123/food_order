@@ -54,8 +54,8 @@ contract IQRFactory is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         address _TIMEKEEPING,
         address _cardVisa,
         address _noti,
-        address _revenueManager,
-        address _StaffAgentStore
+        address _revenueManager, //proxy
+        address _StaffAgentStore //proxy
         // address _POINTS
     )external onlyOwner {
         MANAGEMENT = _MANAGEMENT;

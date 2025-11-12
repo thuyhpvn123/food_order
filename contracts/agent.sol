@@ -44,7 +44,8 @@ contract AgentManagement is
     mapping(address => bool) public isAdmin;
     mapping(string => address) public mDomainToWallet;
     mapping(address => string) public mAgentToDomain;
-    uint256[48] private __gap;
+    mapping(address => bool) public iqrTransfered;
+    uint256[47] private __gap;
     // Events
     event SuperAdminSet(address indexed admin);
     event AgentCreated(address indexed agent, string storeName, uint256 timestamp);
@@ -157,8 +158,14 @@ contract AgentManagement is
             agents[_agent].permissions[0] = false;
             return;
         }
-        address agentIQR = IQRFactory(iqrFactory).createAgentIQR(_agent);
-        agentIQRContracts[_agent] = agentIQR;
+        address agentIQR = IQRFactory(iqrFactory).getAgentIQRContract(_agent);
+        if(agentIQR != address(0)){
+            IAgentIQR(agentIQR).reactivate();
+        }else{
+            agentIQR = IQRFactory(iqrFactory).createAgentIQR(_agent);
+            agentIQRContracts[_agent] = agentIQR;
+
+        }
         emit PermissionGranted(_agent, 0, block.timestamp);
 
     }
@@ -171,10 +178,14 @@ contract AgentManagement is
             agents[_agent].permissions[1] = false;
             return;
         }
-        
-        address contractAddr = ILoyaltyFactory(loyaltyFactory).createAgentLoyalty(_agent);
+        address contractAddr = ILoyaltyFactory(loyaltyFactory).getAgentLoyaltyContract(_agent);
+        if(contractAddr != address(0)){
+            IRestaurantLoyaltySystem(contractAddr).unfreeze();
+        }else{
+            contractAddr = ILoyaltyFactory(loyaltyFactory).createAgentLoyalty(_agent);
             agentLoyaltyContracts[_agent] = contractAddr;            // la contract Points
-            emit PermissionGranted(_agent, 1, block.timestamp);
+        }
+        emit PermissionGranted(_agent, 1, block.timestamp);
     }
     
     /**
@@ -221,7 +232,7 @@ contract AgentManagement is
         string[] memory _subPhones,
         string memory _domain
     ) external onlySuperAdmin validAgent(_agent) whenNotPaused nonReentrant {
-        require( mDomainToWallet[_domain] == address(0),"domain was used");
+        // require( mDomainToWallet[_domain] == address(0),"domain was used");
         Agent storage agent = agents[_agent];
         
         // Update basic info
@@ -230,7 +241,7 @@ contract AgentManagement is
         agent.phone = _phone;
         agent.note = _note;
         agent.updatedAt = block.timestamp;
-        agent.domain = _domain;
+        
         if(_subLocations.length>0){
             delete agent.subLocations;
 
@@ -247,8 +258,12 @@ contract AgentManagement is
 
         // Update permissions
         _updatePermissions(_agent, _permissions);
-        mDomainToWallet[_domain] = agent.walletAddress;
-        mAgentToDomain[agent.walletAddress] = _domain;
+        if( keccak256(abi.encodePacked(agent.domain)) != keccak256(abi.encodePacked(_domain)) && mDomainToWallet[_domain] == address(0)){
+            agent.domain = _domain;
+            mDomainToWallet[_domain] = agent.walletAddress;
+            mAgentToDomain[agent.walletAddress] = _domain;
+
+        }
 
         emit AgentUpdated(_agent, block.timestamp);
     }
@@ -318,6 +333,7 @@ contract AgentManagement is
         // Mark as deleted
         agents[_agent].isActive = false;
         agents[_agent].updatedAt = block.timestamp;
+        agents[_agent].exists = false;
         deletedAgents.push(agents[_agent]);
         emit AgentDeleted(_agent, block.timestamp);
     }

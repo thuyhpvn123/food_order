@@ -16,4 +16,7 @@ output_Points
 output_enhance
 output_order
 output_agentLoyalty
+output_iqrFactory
+output_Management_noOption
+output_order_noOption
 .deploys

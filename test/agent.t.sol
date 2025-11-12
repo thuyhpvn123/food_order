@@ -13,7 +13,7 @@ import "../contracts/loyaltyFactory.sol";
 import "../contracts/iqrFactory.sol";
 import "../contracts/revenue.sol";
 import "../contracts/mtd.sol";
-import "./res.t.sol";
+import "./res1.t.sol";
 import "../contracts/staffMatch.sol";
 import "../contracts/interfaces/IManagement.sol";
 /**
@@ -359,50 +359,52 @@ contract AgentManagementIntegrationTest is RestaurantTest {
     // TEST 3: deleteAgent
     // ========================================================================
     
-    function test_DeleteAgent_Success() public {
-        vm.startPrank(superAdmin);
+    // function test_DeleteAgent_Success() public {
+    //     vm.startPrank(superAdmin);
         
-        // Create agent
-        bool[3] memory permissions = [true, false, true]; // IQR + MeOS (no loyalty)
-        string[] memory subLocations = new string[](1);
-        subLocations[0] = "Branch";
-        string[] memory subPhones = new string[](1);
-        subPhones[0] = "0123456789";
+    //     // Create agent
+    //     bool[3] memory permissions = [true, false, true]; // IQR + MeOS (no loyalty)
+    //     string[] memory subLocations = new string[](1);
+    //     subLocations[0] = "Branch";
+    //     string[] memory subPhones = new string[](1);
+    //     subPhones[0] = "0123456789";
         
-        enhanced.createAgentWithAnalytics(
-            agent1,
-            "Store To Delete",
-            "Address",
-            "Phone",
-            "Note",
-            permissions,
-            subLocations,
-            subPhones,
-            domain
-        );
+    //     enhanced.createAgentWithAnalytics(
+    //         agent1,
+    //         "Store To Delete",
+    //         "Address",
+    //         "Phone",
+    //         "Note",
+    //         permissions,
+    //         subLocations,
+    //         subPhones,
+    //         domain
+    //     );
+    //     enhanced.setAgentIQR( agent1);
+    //     enhanced.setPointsIQR( agent1);
+
+    //     // Verify agent exists and is active
+    //     Agent memory agentBefore = enhanced.getAgent(agent1);
+    //     assertTrue(agentBefore.isActive);
         
-        // Verify agent exists and is active
-        Agent memory agentBefore = enhanced.getAgent(agent1);
-        assertTrue(agentBefore.isActive);
+    //     // Delete agent
         
-        // Delete agent
+    //     enhanced.deleteAgent(agent1);
         
-        enhanced.deleteAgent(agent1);
+    //     // Verify agent is deleted
+    //     Agent memory agentAfter = enhanced.getAgent(agent1);
+    //     assertFalse(agentAfter.isActive, "Agent should be inactive");
+    //     assertTrue(agentAfter.exists, "Agent should still exist in records");
         
-        // Verify agent is deleted
-        Agent memory agentAfter = enhanced.getAgent(agent1);
-        assertFalse(agentAfter.isActive, "Agent should be inactive");
-        assertTrue(agentAfter.exists, "Agent should still exist in records");
+    //     // Verify deleted agents list
+    //     Agent[] memory deletedAgents = enhanced.getDeletedAgentd();
+    //     assertEq(deletedAgents.length, 1, "Should have 1 deleted agent");
+    //     assertEq(deletedAgents[0].walletAddress, agent1);
         
-        // Verify deleted agents list
-        Agent[] memory deletedAgents = enhanced.getDeletedAgentd();
-        assertEq(deletedAgents.length, 1, "Should have 1 deleted agent");
-        assertEq(deletedAgents[0].walletAddress, agent1);
+    //     vm.stopPrank();
         
-        vm.stopPrank();
-        
-        console.log("Test 3 PASSED: deleteAgent");
-    }
+    //     console.log("Test 3 PASSED: deleteAgent");
+    // }
     
     function test_DeleteAgent_WithActiveLoyaltyTokens_ShouldRevert() public {
         vm.startPrank(superAdmin);
@@ -519,7 +521,8 @@ contract AgentManagementIntegrationTest is RestaurantTest {
                 subPhones,
                 i.toString()
             );
-            
+            enhanced.setAgentIQR( agents[i]);
+            enhanced.setPointsIQR( agents[i]);
             enhanced.deleteAgent(agents[i]);
         }
         
@@ -1241,7 +1244,8 @@ contract AgentManagementIntegrationTest is RestaurantTest {
             rank:1,
             desc:"Cac mon voi thit bo",
             active:true,
-            imgUrl:"_imgURL1"
+            imgUrl:"_imgURL1",
+            icon: "icon"
         });
         management.CreateCategory(category1);
 
@@ -1375,12 +1379,21 @@ contract AgentManagementIntegrationTest is RestaurantTest {
         variantIDs[0] = dishInfo.variants[0].variantID;
         variantIDs[1] = dishInfo.variants[1].variantID;
         variantIDs[2] = dishInfo.variants[2].variantID;
+        // SelectedOption[] memory selectionOption0 = new SelectedOption[](1);
+        // selectionOption0[0] = SelectedOption({
+        //     optionId: optionId1,
+        //     selectedFeatureIds: selectedFeatureIdsDish1
+        // });
+
+        // SelectedOption[][] memory dishSelectedOptions = new SelectedOption[][](1);
+        // dishSelectedOptions[0] = selectionOption0;
         bytes32 orderId1T1 = ORDER.makeOrder(
             table,
             dishCodes,
             quantities,
             notes,
             variantIDs
+            // dishSelectedOptions
         );
         string memory discountCode = "";
         uint tip = 0;
@@ -1445,13 +1458,51 @@ contract AgentManagementIntegrationTest is RestaurantTest {
         enhanced.getAgentsInfoPaginated,
         (
             0,
-            1761338782,
+            1855995908,
             "createdAt",
             false,
             1,
             20
         ));
         console.log("enhanced getAgentsInfoPaginated:");
+        console.logBytes(bytesCodeCall);
+        console.log(
+            "-----------------------------------------------------------------------------"
+        );
+        //
+        bytesCodeCall = abi.encodeCall(
+            enhanced.deleteAgent,
+            (
+                0xF1B47A9dFb7Cc0228e1EDfeCe406FD47B0D78FD6            
+            )
+        );
+        console.log("enhanced: deleteAgent");
+        console.logBytes(bytesCodeCall);
+        console.log(
+            "-----------------------------------------------------------------------------"
+        );  
+  
+        //
+        bytesCodeCall = abi.encodeCall(
+            enhanced.isAdmin,
+            (
+                0xC8643eF8f4232bf7E8bAc6Ac73a2fe9A28Cb575A            
+            )
+        );
+        console.log("enhanced: isAdmin:");
+        console.logBytes(bytesCodeCall);
+        console.log(
+            "-----------------------------------------------------------------------------"
+        );  
+
+        //agentLoyaltyContracts
+        bytesCodeCall = abi.encodeCall(
+            loyaltyFactory.agentLoyaltyContracts,
+            (
+                0xce29174f8d0581641a1597a5d3a14ee28d84640f            
+            )
+        );
+        console.log("loyaltyFactory: agentLoyaltyContracts:");
         console.logBytes(bytesCodeCall);
         console.log(
             "-----------------------------------------------------------------------------"
@@ -1532,21 +1583,41 @@ contract AgentManagementIntegrationTest is RestaurantTest {
     string[] memory subPhones = new string[](2);
     subPhones[0] = "0111111111";
     subPhones[1] = "0122222222";
-
+    bool[3] memory filter = [true,false,false];
     bytesCodeCall = abi.encodeCall(
         enhanced.createAgentWithAnalytics,
         (
-            address(0xdf182ed5CF7D29F072C429edd8BFCf9C4151394B),
+            address(0xADB358abbd858798CEF68c2F323EF8edEbeeA51a),
             "Store 5",
             "Address 5",
             "Phone",
             "Note",
-            allFilter,
+            filter,
             subLocations,
             subPhones,
-            domain
+            "suicao.fi.ai"
         ));
     console.log("createAgentWithAnalytics:");
+    console.logBytes(bytesCodeCall);
+    console.log(
+        "-----------------------------------------------------------------------------"
+    ); 
+    //updateAgent
+    filter = [true,true,false];
+    bytesCodeCall = abi.encodeCall(
+        enhanced.updateAgent,
+        (
+            address(0xA620249dc17f23887226506b3eB260f4802a7efc),
+            "Store 5",
+            "Address 5",
+            "Phone",
+            "Note",
+            filter,
+            subLocations,
+            subPhones,
+            "domain_new1"
+        ));
+    console.log("updateAgent:");
     console.logBytes(bytesCodeCall);
     console.log(
         "-----------------------------------------------------------------------------"

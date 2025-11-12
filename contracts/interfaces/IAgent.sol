@@ -168,6 +168,7 @@ interface IRestaurantLoyaltySystem {
 interface IAgentIQR {
     function getTotalRevenue() external view returns (uint256);
     function deactivate() external;
+    function reactivate() external;
     function isActive() external view returns (bool);
     function getIQRSCByAgent(address _agent) external view returns(IQRContracts memory);
     function transferOwnerIQR(
@@ -218,6 +219,8 @@ interface IMANAGEMENT {
     function grantRole(bytes32 role, address account) external;
     function initialize() external;
     function setPoints(address _points) external;
+    function setAgentIqrSC(address _agentIQRSC) external;
+    function setActive(bool _active) external;
 }
 interface IREPORT {
     function transferOwnership(address newOwner) external ;

@@ -34,3 +34,5 @@ agent:
 point:
 	clear && forge test --match-path test/point.t.sol --via-ir -vvv
 
+res1:
+	clear && forge test --match-path test/res1.t.sol --via-ir -vvv

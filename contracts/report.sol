@@ -87,7 +87,7 @@ contract RestaurantReporting is
     mapping(uint => uint) public yearlyOrders;
     mapping(uint => uint) public yearlyRevenues;
     mapping(string =>uint[]) public orderCreatedTimes; //discode to order createdTimes
-
+     mapping(string=> bool) public orderCreatedTimesSet;
     // RankReport[] public rankReport;
     uint256[48] private __gap;
 
@@ -109,7 +109,7 @@ contract RestaurantReporting is
         MANAGEMENT = IManagement(_management);
     }
     
-    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+    function _authorizeUpgrade(address newImplementation) internal override  {}
     function setManangement(address _management) external onlyRole(ROLE_ADMIN) {
         MANAGEMENT = IManagement(_management);
     }
@@ -154,6 +154,7 @@ contract RestaurantReporting is
         uint orders
     ) external {
         orderCreatedTimes[dishCode].push(createdAt);
+        orderCreatedTimesSet[dishCode] = true;
         uint date = _getDay(createdAt);
         dishDailyRevenue[dishCode][date] += revenue;
         dishDailyOrders[dishCode][date] += orders;
@@ -166,28 +167,67 @@ contract RestaurantReporting is
         uint[] storage allTimes = orderCreatedTimes[dishCode];
         uint totalLength = allTimes.length;
         
-        // Validate pagination parameters
-        if(from > totalLength){ return new uint[](0);}
-        if (to > totalLength) {
-            to = totalLength;
+        if(totalLength == 0){
+            return new uint[](0);
         }
+        
         require(from <= to, "Invalid range");
         
-        // Calculate result array size
-        uint resultLength = to - from;
-        uint[] memory result = new uint[](resultLength);
+        // Bước 1: Đếm số phần tử thỏa mãn điều kiện
+        uint count = 0;
+        for(uint i = 0; i < totalLength; i++){
+            if(allTimes[i] >= from && allTimes[i] <= to){
+                count++;
+            }
+        }
         
-        // Copy data from storage to memory
-        for (uint i = 0; i < resultLength; i++) {
-            result[i] = allTimes[from + i];
+        if(count == 0){
+            return new uint[](0);
+        }
+        
+        // Bước 2: Copy dữ liệu
+        uint[] memory result = new uint[](count);
+        uint resultIndex = 0;
+        
+        for (uint i = 0; i < totalLength; i++) {  // ✅ Lặp qua TẤT CẢ allTimes
+            if (allTimes[i] >= from && allTimes[i] <= to) {
+                result[resultIndex] = allTimes[i];
+                resultIndex++;
+            }        
         }
         
         return result;
-    }    
+    }   
     function UpdateDishStats(string memory dishCode, uint revenue, uint orders) external {
         dishTotalRevenue[dishCode] += revenue;
         dishTotalOrders[dishCode] += orders;
+        
     }
+    // Hàm tối ưu - sử dụng dishOrderIndex đã được sort sẵn từ Management
+    function AutoUpdateDishRankingsFromSortedIndex(uint date) public {
+        // Lấy tất cả dish codes
+        string[] memory dishCodes = MANAGEMENT.GetAllDishCodes();
+        
+        if (dishCodes.length == 0) return;
+        
+        // dishOrderIndex đã được sort trong SortDishesWithOrderRange
+        // index trong dishesWithOrder chính là ranking (0 = rank 1, 1 = rank 2,...)
+        for (uint i = 0; i < dishCodes.length; i++) {
+            string memory dishCode = dishCodes[i];
+            
+            // Lấy index đã được sort từ Management
+            uint sortedIndex = MANAGEMENT.getDishOrderIndex(dishCode);
+            
+            // sortedIndex là vị trí trong mảng đã sort (0-based)
+            // Ranking bắt đầu từ 1, nên ranking = sortedIndex + 1
+            uint ranking = sortedIndex + 1;
+            
+            // Cập nhật ranking
+            dishRanking[dishCode] = ranking;
+            dishRankingHistory[dishCode][date] = ranking;
+        }
+    }
+
     function BatchUpdateDishStats(
         string[] memory dishCodes,
         uint[] memory revenues,
@@ -198,11 +238,12 @@ contract RestaurantReporting is
             dishCodes.length == ordersList.length,
             "Input length mismatch"
         );
-
+        uint date = _getDay(block.timestamp);
         for (uint i = 0; i < dishCodes.length; i++) {
             dishTotalRevenue[dishCodes[i]] += revenues[i];
             dishTotalOrders[dishCodes[i]] += ordersList[i];
         }
+        AutoUpdateDishRankingsFromSortedIndex(date);
     }
     function UpdateDishRanking(string memory dishCode, uint ranking) external onlyRole(ROLE_ADMIN) {
         dishRanking[dishCode] = ranking;
@@ -212,7 +253,7 @@ contract RestaurantReporting is
     function UpdateDishRankings(
         string[] memory dishCodes,
         uint[] memory rankings,
-        uint period
+        uint period //date
     ) external onlyRole(ROLE_ADMIN) {
         require(dishCodes.length == rankings.length, "Arrays length mismatch");
         
@@ -235,7 +276,21 @@ contract RestaurantReporting is
             MANAGEMENT.UpdateDishRanking(dishCodes[i], rankings[i]);
         }
     }
-
+    //luong Order goi de demo
+    function UpdateNewCustomerData( 
+        uint date,
+        bool newCustomer
+    ) external{
+        uint month = _getMonth(date * 86400);
+        
+        if(newCustomer) {
+            dailyNewCustomers[date] += 1;
+            monthlyNewCustomers[month] += 1;
+        }else{
+            dailyReturningCustomers[date] += 1;
+            monthlyReturningCustomers[month] +=1;
+        }
+    }
         // Batch update functions to avoid multiple transactions
     function BatchUpdateDailyData(
         uint date,
@@ -290,7 +345,7 @@ contract RestaurantReporting is
         monthlyAgeGroups[month][ageGroup] += count;
     }
 
-    //hàm này cameraAI sẽ gọi
+    //hàm này cameraAI sẽ gọi. tam thoi de Order goi
     function UpdateDailyStatsCustomer(uint date, uint customers) external {
         dailyCustomers[date] += customers;
         
@@ -440,7 +495,7 @@ contract RestaurantReporting is
         }
     }
 
-    // Dish comparison functions
+    // Dish comparison  rank 
     function GetDishComparison(
         string memory dishCode,
         uint currentPeriod,
@@ -620,7 +675,7 @@ contract RestaurantReporting is
         for (uint i = 0; i < topDishCodes.length; i++) {
             string memory dishCode = topDishCodes[i].dish.code;
             // Dish memory dish = MANAGEMENT.GetDish(dishCode);
-            (uint revenue, uint orders, ) = MANAGEMENT.GetDishStats(dishCode);
+            (uint revenue, uint orders, ) = GetDishStats(dishCode);
             
             favoriteDishes[i] = FavoriteDish({
                 dishWithFirstPrice: topDishCodes[i],
@@ -660,7 +715,7 @@ contract RestaurantReporting is
         uint averageRanking,
         bool isConsistentlyPopular
     ) {
-        (totalRevenue, totalOrders, ) = MANAGEMENT.GetDishStats(dishCode);
+        (totalRevenue, totalOrders, ) = GetDishStats(dishCode);
         
         uint rankingSum = 0;
         uint rankingCount = 0;
@@ -945,7 +1000,7 @@ contract RestaurantReporting is
         return (monthlyRevenue[month], monthlyOrders[month], monthlyCustomers[month]);
     }
     
-    function GetDishStats(string memory dishCode) external view returns (uint revenue, uint orders, uint startTime) {
+    function GetDishStats(string memory dishCode) public view returns (uint revenue, uint orders, uint startTime) {
         return (dishTotalRevenue[dishCode], dishTotalOrders[dishCode], dishStartTime[dishCode]);
     }
     function updateDishStartTime(string memory dishCode,uint createdAt) external {

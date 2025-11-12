@@ -163,7 +163,7 @@ struct SimpleCourse {
     COURSE_STATUS status;
     string imgUrl;
     string note;
-    string[] featureNames;
+    // string[] featureNames;
 }
 
 struct Order {
@@ -187,10 +187,10 @@ struct Discount {
     uint amountMax;
     uint amountUsed;
     uint updatedAt;  
-    DiscountType discountType;       // Loại discount
-    bytes32[] targetGroupIds;        // Danh sách group IDs (cho AUTO_GROUP)
-    uint pointCost;                  // Điểm cần để redeem voucher
-    bool isRedeemable;               // Có thể đổi bằng điểm không 
+    // DiscountType discountType;       // Loại discount
+    // bytes32[] targetGroupIds;        // Danh sách group IDs (cho AUTO_GROUP)
+    // uint pointCost;                  // Điểm cần để redeem voucher
+    // bool isRedeemable;               // Có thể đổi bằng điểm không 
 }
 
 struct Payment {
@@ -244,7 +244,7 @@ struct Banner {
     bool active;
     uint256 from;
     uint256 to;
-    BannerPosition location;
+    // BannerPosition location;
     
 }
 struct TCInfo {
@@ -498,7 +498,11 @@ struct ChartTotalCustomers{
 }
 struct ChartTotalRevenue{
     uint time;
-    uint totalRevenue;
+    uint addRevenue;
+}
+struct ChartTotalOrder{
+    uint time;
+    uint addOrder;
 }
 
 struct NewDish {

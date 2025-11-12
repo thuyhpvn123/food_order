@@ -17,6 +17,12 @@ solc --bin --abi contracts/order.sol -o output_order/   --base-path .   --includ
 solc --bin --abi contracts/loyaltyFactory.sol -o output_loyaltyFactory/   --base-path .   --include-path node_modules --via-ir --overwrite
 solc --bin --abi contracts/enhance.sol -o output_enhance/   --base-path .   --include-path node_modules --via-ir --overwrite
 solc --bin --abi contracts/agentLoyalty.sol -o output_agentLoyalty/   --base-path .   --include-path node_modules --via-ir --overwrite
+solc --bin --abi contracts/order_noOption.sol -o output_order_noOption/   --base-path .   --include-path node_modules --via-ir --overwrite
+solc --bin --abi contracts/Management_noOption.sol -o output_Management_noOption/   --base-path .   --include-path node_modules --via-ir --overwrite
+solc --bin --abi contracts/ManagementDemo.sol -o output_ManagementDemo/   --base-path .   --include-path node_modules --via-ir --overwrite
+solc --bin --abi contracts/order_demo.sol -o output_order_demo/   --base-path .   --include-path node_modules --via-ir --overwrite
+solc --bin --abi contracts/timekeeping.sol -o output_timekeeping/   --base-path .   --include-path node_modules --via-ir --overwrite
+solc --bin --abi contracts/report.sol -o output_report/   --base-path .   --include-path node_modules --via-ir --overwrite
 
 ***/
 func main() {

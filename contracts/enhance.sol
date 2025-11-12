@@ -18,7 +18,7 @@ import "@openzeppelin/contracts/utils/Strings.sol";
  * @dev Extension of the main AgentManagement contract with additional features
  */
 contract EnhancedAgentManagement is AgentManagement {
-        using Strings for uint256;
+    using Strings for uint256;
 
     // Additional structures for advanced filtering and analytics
     
@@ -103,7 +103,7 @@ contract EnhancedAgentManagement is AgentManagement {
         require(_walletAddress != address(0),"InvalidWallet");
         require(!agents[_walletAddress].exists,"DuplicateAgent");
         require(bytes(_storeName).length != 0 && bytes(_storeName).length < 100,"Invalid Store Name");
-        require( mDomainToWallet[_domain] == address(0),"domain was used");
+        // require( mDomainToWallet[_domain] == address(0),"domain was used");
         mDomainToWallet[_domain] = _walletAddress;
         mAgentToDomain[_walletAddress] = _domain;
         agents[_walletAddress] = Agent({
@@ -139,16 +139,25 @@ contract EnhancedAgentManagement is AgentManagement {
         require (iqrFactory != address(0) , "IQRFactory is not set");
        IIQRFactory(iqrFactory).setAgentIQR(_agent);
     }
-    //chỉ gọi khi agent có quyền loyalty
+    //FE goi sau khi goi setAgentIQR neu khong co loyalty, goi sau setPointsIQR neu khong co loyalty 
+    // function transferOwnerIqr(address _agent)external onlySuperAdmin{
+    //     IIQRFactory(iqrFactory).transferOwnerIQRContracts(_agent);
+
+    // }
+    //hàm này luôn gọi sau createAgent để tranfer quyền bộ iqr contract cho agent
     //dang le goi trong hàm createAgent nhung phai tach ra de tranh loi out of gas cho FE
     function setPointsIQR(address _agent)external onlySuperAdmin{
-        require (agentLoyaltyContracts[_agent] != address(0) , "agent has no loyalty permission");
-        IIQRFactory(iqrFactory).setPointsIQRFactory(_agent,agentLoyaltyContracts[_agent]);
-        IQRContracts memory iqr = IIQRFactory(iqrFactory).getIQRSCByAgentFromFactory(_agent);
-        address POINTS_PROXY = ILoyaltyFactory(loyaltyFactory).setPointsLoyaltyFactory(_agent,iqr.Management, iqr.Order);
+        if (agentLoyaltyContracts[_agent] != address(0) ){
+            IIQRFactory(iqrFactory).setPointsIQRFactory(_agent,agentLoyaltyContracts[_agent]);
+            IQRContracts memory iqr = IIQRFactory(iqrFactory).getIQRSCByAgentFromFactory(_agent);
+            address POINTS_PROXY = ILoyaltyFactory(loyaltyFactory).setPointsLoyaltyFactory(_agent,iqr.Management, iqr.Order);
+            ILoyaltyFactory(loyaltyFactory).transferOwnerPointSC(_agent,POINTS_PROXY);
+        }
         //transfer owner to agent
-        IIQRFactory(iqrFactory).transferOwnerIQRContracts(_agent);
-        ILoyaltyFactory(loyaltyFactory).transferOwnerPointSC(_agent,POINTS_PROXY);
+        if(iqrTransfered[_agent] == false){
+            IIQRFactory(iqrFactory).transferOwnerIQRContracts(_agent);
+            iqrTransfered[_agent] = true ;
+        }
     }
 
     function CheckAgentExisted(address _agent)external view returns(bool){

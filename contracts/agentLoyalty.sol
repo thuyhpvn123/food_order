@@ -1009,17 +1009,17 @@ contract RestaurantLoyaltySystem is
         
         require(bytes(discount.code).length > 0, "Voucher not found");
         require(discount.active, "Voucher inactive");
-        require(discount.isRedeemable, "Voucher not redeemable with points");
-        require(discount.pointCost > 0, "Invalid point cost");
+        // require(discount.isRedeemable, "Voucher not redeemable with points");
+        // require(discount.pointCost > 0, "Invalid point cost");
         require(block.timestamp >= discount.from && block.timestamp <= discount.to, "Voucher expired");
         require(discount.amountUsed < discount.amountMax, "Voucher limit reached");
-        require(discount.discountType == DiscountType.AUTO_ALL, "Only AUTO_ALL type can be redeemed");
-        require(balanceOf[msg.sender] >= discount.pointCost, "Insufficient points");
+        // require(discount.discountType == DiscountType.AUTO_ALL, "Only AUTO_ALL type can be redeemed");
+        // require(balanceOf[msg.sender] >= discount.pointCost, "Insufficient points");
         
         // BURN TOKENS để đổi voucher
-        balanceOf[msg.sender] -= discount.pointCost;
-        totalSupply -= discount.pointCost;
-        totalRedeemed += discount.pointCost;
+        // balanceOf[msg.sender] -= discount.pointCost;
+        // totalSupply -= discount.pointCost;
+        // totalRedeemed += discount.pointCost;
         
         // Update member (sync)
         member.totalPoints = balanceOf[msg.sender]; // SYNC
@@ -1045,26 +1045,26 @@ contract RestaurantLoyaltySystem is
             voucherDetail: discount
         }));
         
-        _createTransaction(
-            msg.sender,
-            TransactionType.Redeem,
-            -int256(discount.pointCost),
-            0,
-            bytes32(0),
-            string(abi.encodePacked("Redeem ", discount.pointCost.toString(), " ", symbol, " for voucher: ", _voucherCode)),
-            0
-        );
+        // _createTransaction(
+        //     msg.sender,
+        //     TransactionType.Redeem,
+        //     // -int256(discount.pointCost),
+        //     0,
+        //     bytes32(0),
+        //     // string(abi.encodePacked("Redeem ", discount.pointCost.toString(), " ", symbol, " for voucher: ", _voucherCode)),
+        //     0
+        // );
         
-        _recordRewardTransaction(
-            msg.sender,
-            discount.pointCost,
-            "redeem_voucher",
-            string(abi.encodePacked("Voucher: ", _voucherCode))
-        );
+        // _recordRewardTransaction(
+        //     msg.sender,
+        //     // discount.pointCost,
+        //     "redeem_voucher",
+        //     string(abi.encodePacked("Voucher: ", _voucherCode))
+        // );
         
-        emit VoucherRedeemed(msg.sender, _voucherCode, discount.pointCost, block.timestamp);
-        emit Burn(msg.sender, discount.pointCost, string(abi.encodePacked("Voucher: ", _voucherCode)));
-        emit Transfer(msg.sender, address(0), discount.pointCost);
+        // emit VoucherRedeemed(msg.sender, _voucherCode, discount.pointCost, block.timestamp);
+        // emit Burn(msg.sender, discount.pointCost, string(abi.encodePacked("Voucher: ", _voucherCode)));
+        // emit Transfer(msg.sender, address(0), discount.pointCost);
     }
     // ============ PAYMENT WITH POINTS ============
     
@@ -1637,7 +1637,8 @@ function updateMemberGroup(
         emit Frozen(block.timestamp);
     }
     
-    function unfreeze() external onlyOwner {
+    function unfreeze() external  {
+        require(msg.sender == enhancedAgentSC || msg.sender == agent, "Unauthorized");
         frozen = false;
         emit Unfrozen(block.timestamp);
     }

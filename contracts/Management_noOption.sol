@@ -102,12 +102,8 @@
 //     IStaffAgentStore public staffAgentStore;
 //     IPoint public POINTS;
 //     mapping(string => mapping(address => bool)) public voucherRedeemed; // code => user => đã redeem chưa
-//     mapping(string => uint)mDishRemain;
+
 //     // Reserve storage for upgradeability
-//     mapping(string => DishOption[]) public mDishCodeToOptions;
-//     mapping(string =>mapping(string => bytes32[])) public mDishCodeToFeatureIds; //dishCode -> optionName -> mang feature ids
-//     bool public active;
-//     address public agentIQRSC;
 //     uint256[50] private __gap;
 
 //     constructor() {
@@ -124,16 +120,6 @@
 //         require(msg.sender == restaurantOrder,"only restaurantOrder can call");
 //         _;
 //     }
-//     modifier isActive{
-//         require(active,"Contract is deactivated");
-//         _;
-//     }
-//     function setActive(bool _active) external  {
-//         // console.log("msg.sender:",msg.sender);
-//         // console.log("agentIQRSC:",agentIQRSC);
-//         require(msg.sender == agentIQRSC,"only agentIQRSC can call");
-//         active = _active;
-//     }
 //     function setStaffAgentStore(address _staffAgentSC)external onlyRole(ROLE_ADMIN){
 //         staffAgentStore = IStaffAgentStore(_staffAgentSC);
 //     }
@@ -143,15 +129,10 @@
 //     function setTimeKeeping(address _timeKeeping) external onlyRole(ROLE_ADMIN) {
 //         timeKeeping = _timeKeeping;
 //     }
-//     function setPoints(address _points) external {
+//     function setPoints(address _points) external  {
 //         POINTS = IPoint(_points);
 //     }
-//     function setAgentIqrSC(address _agentIQRSC) external onlyRole(ROLE_ADMIN) {
-//         // console.log("setAgentIqrSCaaaaaaaaaaaaaa:",_agentIQRSC);
-        
-//         agentIQRSC = _agentIQRSC;
-//         // console.log("setAgentIqrSCbbbbbbbbbbbbb:",agentIQRSC);
-//     }
+
 //     function checkRole(STAFF_ROLE role,address user)public view returns(bool rightRole){
 //         if(hasRole(ROLE_ADMIN, user) || hasRole(_getRoleHash(role), user) || user == timeKeeping){
 //             return true;
@@ -176,7 +157,6 @@
         
 //         serviceStartTime = block.timestamp;
 //         // restaurantOrder = _restaurantOrder;
-//         active = true;
 //     }
 //     function setServiceStartTime(uint _serviceStartTime) external onlyRole(ROLE_ADMIN) {
 //         serviceStartTime = _serviceStartTime;
@@ -197,7 +177,7 @@
 //         address _walletAddress,
 //         uint _workPlaceId,
 //         string memory _imgLink
-//     ) external onlyRole(ROLE_ADMIN) isActive {
+//     ) external onlyRole(ROLE_ADMIN) {
 //         ITimeKeeping(timeKeeping).getWorkPlaceById(_workPlaceId);
 //         restaurantInfo = RestaurantInfo({
 //             name: _name,
@@ -224,7 +204,7 @@
 //         address _walletAddress,
 //         string memory _imgLink,
 //         uint _workPlaceId
-//     ) external onlyRole(ROLE_ADMIN) isActive {
+//     ) external onlyRole(ROLE_ADMIN) {
 //         restaurantInfo.name = _name;
 //         restaurantInfo.addr = _addr;
 //         restaurantInfo.phone = _phone;
@@ -237,7 +217,7 @@
 
 //     function CreateStaff(
 //         Staff memory staff
-//     )external onlyAdminAndRole(STAFF_ROLE.STAFF_MANAGE) isActive {
+//     )external onlyAdminAndRole(STAFF_ROLE.STAFF_MANAGE){
 //         require(staff.wallet != address(0),"wallet of staff is wrong");
 //         require(mAddToStaff[staff.wallet].wallet == address(0),"wallet existed");
 //         require(bytes(staff.position).length > 0, "position is empty");
@@ -316,7 +296,7 @@
 //         return hasRole(ROLE_STAFF, account);
 //     }
 
-//     function removeStaff(address wallet) external isActive onlyAdminAndRole(STAFF_ROLE.STAFF_MANAGE) {
+//     function removeStaff(address wallet) external onlyAdminAndRole(STAFF_ROLE.STAFF_MANAGE) {
 //     require(mAddToStaff[wallet].wallet != address(0), "Staff not found");
 //     require(mAddToStaff[wallet].active, "Staff already inactive");
     
@@ -357,7 +337,7 @@
 //         string memory _linkImgPortrait,
 //         string memory _position,
 //         bool _active    
-//     )external onlyAdminAndRole(STAFF_ROLE.STAFF_MANAGE) isActive returns(bool){
+//     )external onlyAdminAndRole(STAFF_ROLE.STAFF_MANAGE) returns(bool){
 //         require(_wallet != address(0),"wallet of staff is wrong");
 //         Staff storage staff = mAddToStaff[_wallet];
 //         require(mAddToStaff[staff.wallet].wallet != address(0),"does not find any staff");
@@ -409,7 +389,7 @@
 //             isMonthlyActive[monthKey][staffWallet] = true;
 //         }
 //     }
-//     function GetStaffInfo(address _wallet)external view onlyAdminAndRole(STAFF_ROLE.STAFF_MANAGE) isActive returns(Staff memory){
+//     function GetStaffInfo(address _wallet)external view onlyAdminAndRole(STAFF_ROLE.STAFF_MANAGE) returns(Staff memory){
 //         return mAddToStaff[_wallet];
 //     }
 //     function GetStaff()external view returns(Staff memory){
@@ -629,7 +609,7 @@
 //     }
     
 //     //Area management
-//     function CreateArea(uint _id,string memory _name)external onlyAdminAndRole(STAFF_ROLE.TABLE_MANAGE) isActive{
+//     function CreateArea(uint _id,string memory _name)external onlyAdminAndRole(STAFF_ROLE.TABLE_MANAGE){
 //         require(_id != 0,"Area id can not be 0");
 //         require(mIdToArea[_id].id == 0,"this id existed");
 //         Area memory area = Area({
@@ -671,7 +651,7 @@
 //     function getAreaById(uint _id) external returns(Area memory){
 //         return mIdToArea[_id];
 //     }
-//     function deleteArea(uint _id) external onlyAdminAndRole(STAFF_ROLE.TABLE_MANAGE) isActive{
+//     function deleteArea(uint _id) external onlyAdminAndRole(STAFF_ROLE.TABLE_MANAGE){
 //         delete mIdToArea[_id];
 //         for(uint i;i<areas.length;i++){
 //             if(areas[i].id == _id){
@@ -682,7 +662,7 @@
 //         }
 //         delete mAreaToTable[_id];
 //     }
-//     function updateArea(uint _id, string memory _newName) external onlyAdminAndRole(STAFF_ROLE.TABLE_MANAGE) isActive {
+//     function updateArea(uint _id, string memory _newName) external onlyAdminAndRole(STAFF_ROLE.TABLE_MANAGE) {
 //         // 1. Kiểm tra ID không được bằng 0
 //         require(_id != 0, "Area id can not be 0");
         
@@ -708,7 +688,7 @@
 //         bool _active,
 //         string memory _name,
 //         uint _areaId
-//     )external onlyAdminAndRole(STAFF_ROLE.TABLE_MANAGE) isActive {
+//     )external onlyAdminAndRole(STAFF_ROLE.TABLE_MANAGE){
 //         require(_number != 0,"Table number can not be 0");
 //         require(mNumberToTable[_number].number == 0,"this number existed");
 //         Table memory table = Table({
@@ -751,8 +731,32 @@
 
 //         return (result,mAreaToTable[_areaId].length);
 //     }
+//     function GetAllTablesPagination(uint256 offset, uint256 limit)
+//         external
+//         view
+//         returns (Table[] memory result,uint totalCount)
+//     {
+//         if(offset >= tables.length) {
+//             return ( new Table[](0),tables.length);
+//         }
 
-//     function removeTable(uint _number)external onlyAdminAndRole(STAFF_ROLE.TABLE_MANAGE) isActive {
+//         uint256 end = offset + limit;
+//         if (end > tables.length) {
+//             end = tables.length;
+//         }
+
+//         uint256 size = end - offset;
+//         result = new Table[](size);
+
+//         for (uint256 i = 0; i < size; i++) {
+//             uint256 reverseIndex = tables.length - 1 - offset - i;
+//             result[i] = tables[reverseIndex];
+//         }
+
+//         return (result,tables.length);
+//     }
+
+//     function removeTable(uint _number)external onlyAdminAndRole(STAFF_ROLE.TABLE_MANAGE){
 //         for(uint i;i<tables.length;i++){
 //             if(tables[i].number == _number){
 //                 tables[i] = tables[tables.length-1];
@@ -779,7 +783,7 @@
 //         bool _active,
 //         string memory _name,
 //         uint _newAreaId
-//     )external onlyAdminAndRole(STAFF_ROLE.TABLE_MANAGE) isActive returns(bool){
+//     )external onlyAdminAndRole(STAFF_ROLE.TABLE_MANAGE) returns(bool){
 //         require(_number != 0,"Table number can not be 0");
 //         require(mNumberToTable[_number].number != 0,"this number table does not exist");
 //         mNumberToTable[_number].numPeople = _numPeople;
@@ -808,39 +812,15 @@
 //     function GetAllTables()external view returns(Table[] memory){
 //         return tables;
 //     }
-//     function GetAllTablesPagination(uint256 offset, uint256 limit)
-//         external
-//         view
-//         returns (Table[] memory result,uint totalCount)
-//     {
-//         if(offset >= tables.length) {
-//             return ( new Table[](0),tables.length);
-//         }
-
-//         uint256 end = offset + limit;
-//         if (end > tables.length) {
-//             end = tables.length;
-//         }
-
-//         uint256 size = end - offset;
-//         result = new Table[](size);
-
-//         for (uint256 i = 0; i < size; i++) {
-//             uint256 reverseIndex = tables.length - 1 - offset - i;
-//             result[i] = tables[reverseIndex];
-//         }
-
-//         return (result,tables.length);
-//     }
-
+    
 //     function GetTable(uint _number)external view returns(Table memory){
 //         return mNumberToTable[_number];
 //     }
 
-//     // Category management
+//    // Category management
 //     function CreateCategory(
 //         Category memory category
-//     )external onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE) isActive {
+//     )external onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE){
 //         require(bytes(category.code).length >0,"category code can not be empty");
 //         require(
 //             bytes(mCodeToCat[category.code].code).length == 0,
@@ -858,7 +838,7 @@
 //         categories.push(cat);
 //         isCodeExist[cat.code] = true;
 //     }
-//     function RemoveCategory(string memory _code)external onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE) isActive {
+//     function RemoveCategory(string memory _code)external onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE){
 //         for(uint i;i<categories.length;i++){
 //             if(keccak256(abi.encodePacked(categories[i].code ))== keccak256(abi.encodePacked(_code))){
 //                 categories[i] = categories[categories.length-1];
@@ -876,7 +856,7 @@
 //         bool _active,
 //         string memory _imgUrl,
 //         string memory _icon
-//     )external onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE) isActive returns(bool)  {
+//     )external onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE) returns(bool){
 //         require(bytes(_code).length >0,"category code can not be empty");
 //         require(bytes(mCodeToCat[_code].code).length > 0,"category code does not exist");
 //         Category storage category = mCodeToCat[_code];
@@ -892,12 +872,7 @@
 //             }
 //         }
 //         return true;
-//     }
-    
-//     function GetCategories()external view returns(Category[] memory){
-//         return categories;
-//     }
-    
+//     }    
 //     function GetCategory(
 //         string memory _code
 //     )external view returns(Category memory){
@@ -905,6 +880,10 @@
 //         require(bytes(mCodeToCat[_code].code).length > 0 ,"category code does not exist");
 //         return mCodeToCat[_code];
 //     }
+//         function GetCategories()external view returns(Category[] memory){
+//         return categories;
+//     }
+
 //     function GetCategoriesPagination(
 //         uint offset,
 //         uint limit
@@ -937,7 +916,7 @@
 //         Dish memory dish,
 //         // uint _quantity
 //         VariantParams[] memory _variants
-//     )external onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE) isActive {
+//     )external onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE){
 //         require(bytes(_codeCategory).length >0 && bytes(dish.code).length >0,"category code and dish code can not be empty");
 //         require(
 //             bytes(mCodeToCat[_codeCategory].code).length > 0,
@@ -1017,6 +996,9 @@
 //                 });
 //                 dishesWithOrder.push(dishWithOrder);
 //                 dishOrderIndex[dish.code] = dishesWithOrder.length; // index + 1
+//                 // console.log("create dish-------");
+//                 // console.log("dish.code:",dish.code);
+//                 // console.log("index:",dishesWithOrder.length);
 //             }
 //         }
 //     }
@@ -1348,9 +1330,15 @@
 //             dishOrderIndex[dishCode] = from + i;
 //         }
 //     }
+//             // console.log("dishesWithOrder[0].dish.code:",dishesWithOrder[0].dish.code);
+//             // console.log("dishesWithOrder[0].dish.orderNum:",dishesWithOrder[0].orderNum);
+//             // console.log("dishesWithOrder[1].dish.code:",dishesWithOrder[1].dish.code);
+//             // console.log("dishesWithOrder[1].dish.orderNum:",dishesWithOrder[1].orderNum);
+//             // console.log("dishesWithOrder[2].dish.code:",dishesWithOrder[2].dish.code);
+//             // console.log("dishesWithOrder[2].dish.orderNum:",dishesWithOrder[2].orderNum);
 
 // }    //FE gọi sau mỗi khi executeOrder được gọi
-//     function UpdateRankDishes()external isActive{
+//     function UpdateRankDishes()external{
 //         uint256 dishCount = dishesWithOrder.length;
 //         for(uint i; i< dishCount; i++){
 //             uint rank = i;
@@ -1393,7 +1381,7 @@
 //         return (times, totalCount);
 //     }
 
-//     function UpdateTopDish() public isActive {
+//     function UpdateTopDish() public  {
 //         uint dishCount = allDishCodes.length;
         
 //         // Tạo mảng dishes với orderNum
@@ -1737,11 +1725,11 @@
         
 //         return recentDishes;
 //     }
-//     function UpdateOrderNum (
+//     function UpdateOrderNum(
 //         string memory _codeDish,
 //         uint orderNumAdd,
 //         uint createdAt
-//     )external isActive onlyOrder() {
+//     )external onlyOrder() {
 //         require(orderNumAdd >0, "orderNum added can be zero");
 //         require(
 //             bytes(mCodeToDish[_codeDish].code).length > 0,
@@ -1759,10 +1747,12 @@
 //             mMonthToDishCode[month][_codeDish] = true;
 //         }
 //         uint index = dishOrderIndex[_codeDish];
+//         // console.log("_codeDish:",_codeDish);
+//         // console.log("index:",index);
 //         dishesWithOrder[index -1].orderNum += orderNumAdd;
 //     }
 //     //FE cần gọi sau khi gọi executeOrder
-//     function UpdateTotalRevenueReport(uint createdAt, uint addRevenue) external isActive{
+//     function UpdateTotalRevenueReport(uint createdAt, uint addRevenue) external {
 //         totalRevenueDays.push(ChartTotalRevenue({
 //             time:createdAt,
 //             totalRevenue: addRevenue
@@ -1893,7 +1883,7 @@
 //         string memory _videoLink,
 //         VariantParams[] memory _variants,
 //         string[] memory _ingredients
-//     )external onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE) isActive returns(bool){
+//     )external onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE) returns(bool){
 //         require(bytes(_codeDish).length >0 && bytes(_codeCat).length >0,"dish code and category code can not be empty");
 //         require(
 //             bytes(mCodeToDish[_codeDish].code).length > 0,
@@ -1954,7 +1944,7 @@
 //     function RemoveDish(
 //         string memory _codeCategory,
 //         string memory _dishCode
-//     ) external onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE) isActive {
+//     ) external onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE) {
 //         require(bytes(_codeCategory).length > 0, "Invalid category code");
 //         require(bytes(_dishCode).length > 0, "Invalid dish code");
 //         require(isCodeExist[_dishCode], "Dish does not exist");
@@ -2053,14 +2043,14 @@
 //         string memory _codeCat,
 //         string memory _codeDish,
 //         bool _available
-//     ) external onlyAdminAndRole(STAFF_ROLE.UPDATE_STATUS_DISH) isActive returns(bool) {
+//     ) external onlyAdminAndRole(STAFF_ROLE.UPDATE_STATUS_DISH) returns(bool) {
 //         require(bytes(mCodeToDish[_codeDish].code).length != 0,"can not find dish");
 //         mCodeToDish[_codeDish].available = _available;
 //         _updateDishFromCat(_codeCat,_codeDish);
 //         return true;
 //     }
 
-//     // Discount management for Loyalty
+//     // Discount management
 //     function CreateDiscount(
 //         string memory _code,
 //         string memory _name,
@@ -2113,7 +2103,7 @@
 //         });
 //         discounts.push(mCodeToDiscount[_code]);
 //     }
-//     function RemoveDiscount(string memory _code)external onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE) isActive {
+//     function RemoveDiscount(string memory _code)external onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE){
 //         for(uint i;i<discounts.length;i++){
 //             if(keccak256(abi.encodePacked(discounts[i].code ))== keccak256(abi.encodePacked(_code))){
 //                 discounts[i] = discounts[discounts.length-1];
@@ -2137,7 +2127,7 @@
 //         bytes32[] memory _targetGroupIds,
 //         uint _pointCost,
 //         bool _isRedeemable
-//     )external onlyRole(ROLE_ADMIN) isActive{
+//     )external onlyRole(ROLE_ADMIN){
 //         require(bytes(_code).length >0,"code of discount can not be empty");
 //         require(bytes(mCodeToDiscount[_code].code).length > 0,"can not find any discount");
 //         require(_amountMax > 0 && _discountPercent > 0 ,"maximum number and percent of discount can be zero" );
@@ -2494,7 +2484,7 @@
 //         uint _to,
 //         BannerPosition _location,
 //         uint256 id
-//     ) external onlyRole(ROLE_ADMIN) isActive {
+//     ) external onlyRole(ROLE_ADMIN){
 //         uint256 index = findBannerIndex(id);
 //         require(index < banners.length, "Banner not found");
         
@@ -2567,7 +2557,7 @@
 //         string memory _content,
 //         TCStatus _status,        
 //         uint256 id
-//     ) external onlyAdminAndRole(STAFF_ROLE.TC_MANAGE) isActive{
+//     ) external onlyAdminAndRole(STAFF_ROLE.TC_MANAGE) {
 //         uint256 index = findTCIndex(id);
 //         require(index < tcs.length, "TC not found");
         
@@ -2606,12 +2596,12 @@
 //         string memory _title,
 //         uint256 from,   //số giây tính từ 0h ngày hôm đó. vd 08:00 là 8*3600=28800
 //         uint256 to
-//     ) external onlyAdminAndRole(STAFF_ROLE.STAFF_MANAGE) isActive returns(uint256){
+//     ) external onlyAdminAndRole(STAFF_ROLE.STAFF_MANAGE) returns(uint256){
 //         uint256 shiftId = workingShifts.length + 1;
 //         workingShifts.push(WorkingShift(_title,from,to,shiftId));
 //         return shiftId;
 //     }
-//     function RemoveWorkingShift(uint256 id) external isActive onlyAdminAndRole(STAFF_ROLE.STAFF_MANAGE) {
+//     function RemoveWorkingShift(uint256 id) external onlyAdminAndRole(STAFF_ROLE.STAFF_MANAGE) {
 //         uint256 index = findWorkingShiftIndex(id);
 //         require(index < workingShifts.length, "Working shift not found");
         
@@ -2624,7 +2614,7 @@
 //         uint256 from,  
 //         uint256 to,
 //         uint256 id
-//     ) external onlyAdminAndRole(STAFF_ROLE.STAFF_MANAGE) isActive {
+//     ) external onlyAdminAndRole(STAFF_ROLE.STAFF_MANAGE) {
 //         uint256 index = findWorkingShiftIndex(id);
 //         require(index < workingShifts.length, "Working shift not found");
         
@@ -2885,260 +2875,5 @@
 //         }
 //         return false;
 //     }
-//     //DishOptions Management
-//     // ================= CREATE DISH OPTIONS (UPDATED) =================
-//     function CreateDishOptions(
-//         string memory dishCode,
-//         string memory _optionName,
-//         string[] memory _featureNames,
-//         uint256[] memory _featurePrices,
-//         bool _isCompulsory,
-//         uint _maximumSelection
-//     ) external onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE) returns(bytes32){
-//         require(bytes(_optionName).length > 0, "option name is required");
-//         require(_featureNames.length > 0, "features is required");
-//         require(_featureNames.length == _featurePrices.length, "features and prices length mismatch");
-//         // require(_maximumSelection > 0, "maximum selection is required");
-//         require(_isCompulsory == false || _maximumSelection >= 1, "maximum selection must be at least 1 if option is compulsory");
-        
-//         bytes32 _optionId = keccak256(abi.encodePacked(block.timestamp, dishCode, _optionName));
 
-//         DishOption storage newOption = mDishCodeToOptions[dishCode].push();
-//         newOption.optionId = _optionId;
-//         newOption.optionName = _optionName;
-//         newOption.isCompulsory = _isCompulsory;
-//         newOption.maximumSelection = _maximumSelection;
-        
-//         // Create features with unique IDs
-//         for (uint i = 0; i < _featureNames.length; i++) {
-//             bytes32 featureId = keccak256(abi.encodePacked(_optionId, _featureNames[i], i));
-//             newOption.features.push(OptionFeature({
-//                 featureId: featureId,
-//                 featureName: _featureNames[i],
-//                 featurePrice: _featurePrices[i]
-//             }));
-//             mDishCodeToFeatureIds[dishCode][_optionName].push(featureId);
-//         }
-//         return _optionId;
-//     }
-//     function getFeatureIdsAFromDishCode(
-//         string memory dishCode,
-//         string memory _optionName
-//     ) external view returns(bytes32[] memory){
-//         return  mDishCodeToFeatureIds[dishCode][_optionName];
-//     }
-//     // Update DishOption by optionId
-//     function updateDishOption(
-//         string memory _dishCode,
-//         bytes32 _optionId,
-//         string memory _optionName,
-//         string[] memory _featureNames,
-//         uint256[] memory _featurePrices,
-//         bool _isCompulsory,
-//         uint _maximumSelection
-//     ) external onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE) {
-//         require(bytes(_optionName).length > 0, "option name is required");
-//         require(_featureNames.length > 0, "features is required");
-//         require(_featureNames.length == _featurePrices.length, "features and prices length mismatch");
-//         require(_maximumSelection > 0, "maximum selection is required");
-//         require(!_isCompulsory || _maximumSelection >= 1, "max selection at least 1 if compulsory");
-        
-//         DishOption[] storage dishOptions = mDishCodeToOptions[_dishCode];
-//         require(dishOptions.length > 0, "Dish not found");
-
-//         bool found = false;
-//         for (uint i = 0; i < dishOptions.length; i++) {
-//             if (dishOptions[i].optionId == _optionId) {
-//                 dishOptions[i].optionName = _optionName;
-//                 dishOptions[i].isCompulsory = _isCompulsory;
-//                 dishOptions[i].maximumSelection = _maximumSelection;
-                
-//                 // Reset and rebuild features
-//                 delete dishOptions[i].features;
-//                 for (uint j = 0; j < _featureNames.length; j++) {
-//                     bytes32 featureId = keccak256(abi.encodePacked(_optionId, _featureNames[j], j));
-//                     dishOptions[i].features.push(OptionFeature({
-//                         featureId: featureId,
-//                         featureName: _featureNames[j],
-//                         featurePrice: _featurePrices[j]
-//                     }));
-//                 }
-//                 found = true;
-//                 break;
-//             }
-//         }
-//         require(found, "DishOption not found");
-//     }
-//     // Delete DishOption by optionId
-//     function DeleteDishOption(string memory dishCode, bytes32 optionId)
-//         external
-//         onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE)
-//     {
-//         DishOption[] storage options = mDishCodeToOptions[dishCode];
-//         bool found = false;
-
-//         for (uint i = 0; i < options.length; i++) {
-//             if (options[i].optionId == optionId) {
-//                 // xóa phần tử i bằng cách swap với phần tử cuối
-//                 options[i] = options[options.length - 1];
-//                 options.pop();
-//                 found = true;
-//                 break;
-//             }
-//         }
-        
-//         require(found, "option not found");
-//         DishOption memory dishOption= GetDishOptionById(dishCode,optionId);
-//         delete  mDishCodeToFeatureIds[dishCode][dishOption.optionName];
-//     }
-//     function GetDishOptionById(
-//         string memory dishCode,
-//         bytes32 optionId
-//     ) public view returns (DishOption memory) {
-//         DishOption[] storage options = mDishCodeToOptions[dishCode];
-//         for (uint i = 0; i < options.length; i++) {
-//             if (options[i].optionId == optionId) {
-//                 return options[i];
-//             }
-//         }
-//         revert("option not found");
-//     }
-//     function GetDishOptionByIds(
-//         string memory dishCode,
-//         bytes32[] memory optionIds
-//     ) external view returns (DishOption[] memory) {
-//         require(optionIds.length > 0, "optionIds array cannot be empty");
-        
-//         DishOption[] storage allOptions = mDishCodeToOptions[dishCode];
-//         DishOption[] memory result = new DishOption[](optionIds.length);
-        
-//         for (uint i = 0; i < optionIds.length; i++) {
-//             bool found = false;
-//             for (uint j = 0; j < allOptions.length; j++) {
-//                 if (allOptions[j].optionId == optionIds[i]) {
-//                     result[i] = allOptions[j];
-//                     found = true;
-//                     break;
-//                 }
-//             }
-//             require(found, "Option not found");
-//         }
-//         return result;
-//     }   
-//     // ------------------- GET ALL PAGINATION -------------------
-//     function GetAllDishOptionsFromDishCodePagination(
-//         string memory dishCode,
-//         uint offset,
-//         uint limit
-//     ) external view returns (DishOption[] memory, uint totalCount) {
-//         DishOption[] storage allOptions = mDishCodeToOptions[dishCode];
-//         totalCount = allOptions.length;
-
-//         if (offset >= totalCount) {
-//             return (new DishOption[](0) , totalCount);
-//         }
-
-//         uint end = offset + limit;
-//         if (end > totalCount) end = totalCount;
-//         uint count = end - offset;
-
-//         DishOption[] memory result = new DishOption[](count);
-//         for (uint i = 0; i < count; i++) {
-//             uint reverseIndex = totalCount -1 - offset - i;
-//             result[i] = allOptions[reverseIndex];
-//         }
-
-//         return (result, totalCount);
-//     }
-
-//     function CalculateAndValidateOptions(
-//             string memory dishCode,
-//             SelectedOption[] memory selectedOptions
-//     ) external view returns (uint totalOptionsPrice, string[] memory featureNames) {
-//         DishOption[] storage allOptions = mDishCodeToOptions[dishCode];
-        
-//         // Count total features to initialize array
-//         uint totalFeaturesCount = 0;
-//         for (uint i = 0; i < selectedOptions.length; i++) {
-//             totalFeaturesCount += selectedOptions[i].selectedFeatureIds.length;
-//         }
-        
-//         featureNames = new string[](totalFeaturesCount);
-//         uint featureIndex = 0;
-        
-//         if (selectedOptions.length == 0) {
-//             // Check if there are any compulsory options
-//             for (uint i = 0; i < allOptions.length; i++) {
-//                 require(!allOptions[i].isCompulsory, 
-//                     string(abi.encodePacked("Compulsory option missing: ", allOptions[i].optionName)));
-//             }
-//             return (0, featureNames);
-//         }
-        
-//         // Create bitmap to track which compulsory options are selected (max 256 options)
-//         uint256 compulsoryBitmap = 0;
-//         uint compulsoryCount = 0;
-        
-//         // First pass: identify compulsory options and create bitmap
-//         for (uint i = 0; i < allOptions.length; i++) {
-//             if (allOptions[i].isCompulsory) {
-//                 compulsoryBitmap |= (1 << i);
-//                 compulsoryCount++;
-//             }
-//         }
-        
-//         uint selectedCompulsoryCount = 0;
-        
-//         // Second pass: process selected options (validate + calculate price + collect feature names)
-//         for (uint i = 0; i < selectedOptions.length; i++) {
-//             bytes32 optionId = selectedOptions[i].optionId;
-//             bytes32[] memory featureIds = selectedOptions[i].selectedFeatureIds;
-//             uint featureCount = featureIds.length;
-            
-//             require(featureCount > 0, "Option must have at least one feature selected");
-            
-//             // Find the option (only once per selected option)
-//             bool optionFound = false;
-//             for (uint j = 0; j < allOptions.length; j++) {
-//                 if (allOptions[j].optionId == optionId) {
-//                     optionFound = true;
-                    
-//                     // Check if this is a compulsory option
-//                     if ((compulsoryBitmap & (1 << j)) != 0) {
-//                         selectedCompulsoryCount++;
-//                     }
-                    
-//                     // Validate maximum selection
-//                     require(featureCount <= allOptions[j].maximumSelection, 
-//                         "Exceeded maximum selection");
-                    
-//                     // Calculate price, validate features, and collect feature names in single loop
-//                     OptionFeature[] storage features = allOptions[j].features;
-//                     uint featuresLength = features.length;
-                    
-//                     for (uint k = 0; k < featureCount; k++) {
-//                         bool featureFound = false;
-//                         bytes32 searchFeatureId = featureIds[k];
-                        
-//                         // Search features
-//                         for (uint l = 0; l < featuresLength; l++) {
-//                             if (features[l].featureId == searchFeatureId) {
-//                                 totalOptionsPrice += features[l].featurePrice;
-//                                 featureNames[featureIndex] = features[l].featureName;
-//                                 featureIndex++;
-//                                 featureFound = true;
-//                                 break;
-//                             }
-//                         }
-//                         require(featureFound, "Invalid feature ID");
-//                     }
-//                     break;
-//                 }
-//             }
-//             require(optionFound, "Option not found");
-//         }
-        
-//         // Final check: all compulsory options must be selected
-//         require(selectedCompulsoryCount == compulsoryCount, "Some compulsory options are missing");
-//     }
 // }

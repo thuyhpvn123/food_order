@@ -30,7 +30,7 @@ unit-test:
 res:
 	clear && forge test --match-path test/res.t.sol --via-ir -vvv
 agent:
-	clear && forge test --match-path test/agent.t.sol --via-ir -vvv
+	clear && forge test --match-path test/agent_loyalty.t.sol --via-ir -vvv
 point:
 	clear && forge test --match-path test/point.t.sol --via-ir -vvv
 

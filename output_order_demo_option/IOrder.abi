@@ -1,0 +1,1 @@
+[{"inputs":[{"internalType":"bytes32","name":"_paymentId","type":"bytes32"},{"internalType":"uint256","name":"_amount","type":"uint256"}],"name":"isValidAmount","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"}]

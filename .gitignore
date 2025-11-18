@@ -19,4 +19,7 @@ output_agentLoyalty
 output_iqrFactory
 output_Management_noOption
 output_order_noOption
+output_ManagementDemo
+output_order_demo
 .deploys
+bin

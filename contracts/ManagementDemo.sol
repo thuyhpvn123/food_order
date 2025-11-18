@@ -105,8 +105,14 @@ contract Management is
     mapping(string => mapping(address => bool)) public voucherRedeemed; // code => user => đã redeem chưa
     mapping(string => uint)mDishRemain;
     // Reserve storage for upgradeability
-    mapping(string => DishOption[]) public mDishCodeToOptions;
+    mapping(bytes32 => DishOption) public mIdToOption;
     mapping(string =>mapping(string => bytes32[])) public mDishCodeToFeatureIds; //dishCode -> optionName -> mang feature ids
+    mapping(string => string[]) public mDishCodeToOptionNames;
+    mapping(string => DishOption[]) public mDishCodeToOptions;
+    mapping(bytes32 => string[]) public mOptionIdToDishCodes;
+    DishOption[] public allDishOptions;
+    string[] public allOptionNames;
+    mapping(string => bool) public isOptionNameExist;
     bool public active;
     address public agentIQRSC;
     ChartTotalOrder[] public totalOrderDays;
@@ -413,7 +419,13 @@ contract Management is
     function GetStaff()external view returns(Staff memory){
         return mAddToStaff[msg.sender];
     }
-
+    function GetAllStaff()
+        external
+        view
+        returns (Staff[] memory)
+    {
+        return staffs;
+    }
     function GetStaffsPagination(uint256 offset, uint256 limit)
         external
         view
@@ -934,7 +946,8 @@ contract Management is
         string memory _codeCategory,
         Dish memory dish,
         // uint _quantity
-        VariantParams[] memory _variants
+        VariantParams[] memory _variants,
+        bytes32[] memory optionIds
     )external onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE) isActive {
         require(bytes(_codeCategory).length >0 && bytes(dish.code).length >0,"category code and dish code can not be empty");
         require(
@@ -1017,6 +1030,10 @@ contract Management is
                 dishOrderIndex[dish.code] = dishesWithOrder.length - 1; // index + 1
             }
         }
+        if(optionIds.length > 0){
+            _batchChooseOption(dish.code,optionIds);
+        }
+        
     }
     // Purpose: This function prevent 1 product have same attributes
     // so it maybe like: Shirt, Color : Red, Size : M
@@ -1507,6 +1524,19 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
     )external view returns(Dish[] memory){
         return mCodeCatToDishes[_codeCategory];
     }
+    function GetAllDishInfosByCat(
+        string memory _codeCategory
+    )external view returns(DishInfo[] memory productsInfo){
+        uint len = mCodeCatToDishes[_codeCategory].length;
+        productsInfo = new DishInfo[](len);
+
+        for (uint256 i = 0; i < len; i++) {
+            uint256 reverseIndex = len - 1 - i;
+            productsInfo[i] = getDishInfo(mCodeCatToDishes[_codeCategory][reverseIndex].code);
+        }
+
+        return productsInfo;
+    }
 
     function GetDishInfosByCat(
         string memory _codeCategory,
@@ -1656,6 +1686,37 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
                 arr[j] = key;
             }
         }
+    }
+    function GetNewDishes() 
+        public 
+        view 
+        returns (NewDish[] memory) 
+    {
+        uint dishCount = allDishCodes.length;
+        
+        // Đếm số món ăn mới (trong vòng 30 ngày)
+        uint count = 0;
+        for(uint i = 0; i < dishCount; i++){
+            string memory _dishCode = allDishCodes[i];
+            Dish memory dish = mCodeToDish[_dishCode];
+            if(dish.createdAt >= block.timestamp - 30 days){
+                count++;
+            }
+        }
+        NewDish[] memory result = new NewDish[](count);
+        uint resultIndex = 0;
+        
+        for (uint i = 0; i < dishCount; i++) {
+            string memory _dishCode = allDishCodes[i];
+            Dish memory dish = mCodeToDish[_dishCode];           
+            result[resultIndex] = NewDish({
+                name: dish.name,
+                codeDish: _dishCode,
+                createAt: dish.createdAt
+            });
+            resultIndex++;
+        }
+        return result;
     }
     //dishes in 30 days back
     function GetNewDishesWithLimit(uint offset, uint limit) 
@@ -2134,7 +2195,7 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
         return true;
     }
 
-    // Discount management
+    // Discount management for Loyalty
     function CreateDiscount(
         string memory _code,
         string memory _name,
@@ -2144,10 +2205,30 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
         uint _to,
         bool _active,
         string memory _imgURL,
-        uint _amountMax
+        uint _amountMax,
+        DiscountType _discountType,
+        bytes32[] memory _targetGroupIds,
+        uint _pointCost,
+        bool _isRedeemable
     )external onlyRole(ROLE_ADMIN){
         require(bytes(_code).length >0,"code of discount can not be empty");
         require(bytes(mCodeToDiscount[_code].code).length == 0,"code of discount existed");
+        require(_discountPercent > 0 && _discountPercent <= 100, "Invalid discount percent");
+        require(_from < _to, "Invalid time range");
+         // Validate theo loại discount
+        if (_discountType == DiscountType.AUTO_GROUP) {
+            require(_targetGroupIds.length > 0, "Group IDs required for AUTO_GROUP");
+        }
+        
+        if (_isRedeemable) {
+            require(_pointCost > 0, "Point cost required for redeemable discount");
+            require(address(POINTS) != address(0),"POINTS contract not set yet");
+            for(uint i; i <_targetGroupIds.length; i++ ){
+                require(POINTS.isMemberGroupId(_targetGroupIds[i]),"membergroup id is wrong");
+            }
+
+        }
+
         mCodeToDiscount[_code] = Discount({
             code: _code ,
             name: _name ,
@@ -2159,7 +2240,11 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
             imgURL : _imgURL,
             amountMax : _amountMax,
             amountUsed : 0,
-            updatedAt  : block.timestamp
+            updatedAt  : block.timestamp,
+            discountType: _discountType,
+            targetGroupIds: _targetGroupIds,
+            pointCost: _pointCost,
+            isRedeemable: _isRedeemable
         });
         discounts.push(mCodeToDiscount[_code]);
     }
@@ -2182,15 +2267,26 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
         uint _to,
         bool _active,
         string memory _imgURL,
-        uint _amountMax
-    )external onlyRole(ROLE_ADMIN){
+        uint _amountMax,
+        DiscountType _discountType,
+        bytes32[] memory _targetGroupIds,
+        uint _pointCost,
+        bool _isRedeemable
+    )external onlyRole(ROLE_ADMIN) isActive{
         require(bytes(_code).length >0,"code of discount can not be empty");
         require(bytes(mCodeToDiscount[_code].code).length > 0,"can not find any discount");
         require(_amountMax > 0 && _discountPercent > 0 ,"maximum number and percent of discount can be zero" );
         require(_discountPercent <= 100, "discount percent need to be less than 100");
-        // require(_from >= block.timestamp && _to > block.timestamp,"time is not valid");
+        require(_from >= block.timestamp && _to > block.timestamp,"time is not valid");
         require(_amountMax >= mCodeToDiscount[_code].amountUsed , 
                 "number of maximum can not be less than number discount used");
+         if (_discountType == DiscountType.AUTO_GROUP) {
+            require(_targetGroupIds.length > 0, "Group IDs required");
+        }
+        
+        if (_isRedeemable) {
+            require(_pointCost > 0, "Point cost required");
+        }
         mCodeToDiscount[_code].name = _name;
         mCodeToDiscount[_code].discountPercent = _discountPercent;
         mCodeToDiscount[_code].desc = _desc;
@@ -2199,6 +2295,11 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
         mCodeToDiscount[_code].active = _active;
         mCodeToDiscount[_code].imgURL = _imgURL;
         mCodeToDiscount[_code].amountMax = _amountMax;
+        mCodeToDiscount[_code].discountType = _discountType;
+        mCodeToDiscount[_code].targetGroupIds = _targetGroupIds;
+        mCodeToDiscount[_code].pointCost = _pointCost;
+        mCodeToDiscount[_code].isRedeemable = _isRedeemable;
+        mCodeToDiscount[_code].updatedAt = block.timestamp;
         for(uint i;i<discounts.length;i++){
             if(keccak256(abi.encodePacked(discounts[i].code ))== keccak256(abi.encodePacked(_code))){
                 discounts[i] = mCodeToDiscount[_code];
@@ -2368,6 +2469,30 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
     function GetAllDiscounts()external view returns(Discount[] memory){
         return discounts;
     }
+    function GetAllDiscountsPagination(
+        uint256 offset, 
+        uint256 limit
+    )external view returns(Discount[] memory,uint totalCount)
+    {
+        if(offset >= discounts.length) {
+            return ( new Discount[](0),discounts.length);
+        }
+
+        uint256 end = offset + limit;
+        if (end > discounts.length) {
+            end = discounts.length;
+        }
+
+        uint256 size = end - offset;
+        Discount[] memory result = new Discount[](size);
+
+        for (uint256 i = 0; i < size; i++) {
+            uint256 reverseIndex = discounts.length - 1 - offset - i;
+            result[i] = discounts[reverseIndex];
+        }
+
+        return (result,discounts.length);
+    }
 
 
     function GetVoucherReport(uint fromTime, uint toTime) external view returns (VoucherReport memory) {
@@ -2512,10 +2637,17 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
         string memory _linkTo,
         bool active,
         uint from,
-        uint to
+        uint to,
+        BannerPosition _location,
+        LinkBannerType _type
     ) external onlyRole(ROLE_ADMIN) returns(uint256){
+        if(_type == LinkBannerType.WRITING){ 
+            require(bytes(_description).length >0,"this banner type need description");
+        }else{
+             require(bytes(_description).length == 0,"this banner type has no description");
+        }
         uint256 newId = banners.length + 1;
-        banners.push(Banner(newId,_name,_linkImg,_description,_linkTo,active,from, to));
+        banners.push(Banner(newId,_name,_linkImg,_description,_linkTo,active,from, to,_location));
         return newId;
     }
     function RemoveBanner(uint256 id) external onlyRole(ROLE_ADMIN) {
@@ -2533,8 +2665,9 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
         bool _active,
         uint _from,
         uint _to,
+        BannerPosition _location,
         uint256 id
-    ) external onlyRole(ROLE_ADMIN){
+    ) external onlyRole(ROLE_ADMIN) isActive {
         uint256 index = findBannerIndex(id);
         require(index < banners.length, "Banner not found");
         
@@ -2558,10 +2691,36 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
             banner.to = _to;
         }
         banner.active = _active; 
+        banner.location = _location;
     }
     function getBanners() external view returns(Banner[] memory){
         return banners;
     }
+    function GetBannersPagination(uint256 offset, uint256 limit)
+        external
+        view
+        returns (Banner[] memory result,uint totalCount)
+    {
+        if(offset >= banners.length) {
+            return ( new Banner[](0),banners.length);
+        }
+
+        uint256 end = offset + limit;
+        if (end > banners.length) {
+            end = banners.length;
+        }
+
+        uint256 size = end - offset;
+        result = new Banner[](size);
+
+        for (uint256 i = 0; i < size; i++) {
+            uint256 reverseIndex = banners.length - 1 - offset - i;
+            result[i] = banners[reverseIndex];
+        }
+
+        return (result,banners.length);
+    }
+
     function getABanner(uint256 id) external view returns(Banner memory) {
         uint256 index = findBannerIndex(id);
         require(index < banners.length, "Banner not found");
@@ -2625,6 +2784,30 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
     function getTcs() external view returns(TCInfo[] memory) {
         return tcs;
     }
+    function getTcsPagination(uint256 offset, uint256 limit)
+        external
+        view
+        returns (TCInfo[] memory result,uint totalCount)
+    {
+        if(offset >= tcs.length) {
+            return ( new TCInfo[](0),tcs.length);
+        }
+
+        uint256 end = offset + limit;
+        if (end > tcs.length) {
+            end = tcs.length;
+        }
+
+        uint256 size = end - offset;
+        result = new TCInfo[](size);
+
+        for (uint256 i = 0; i < size; i++) {
+            uint256 reverseIndex = tcs.length - 1 - offset - i;
+            result[i] = tcs[reverseIndex];
+        }
+
+        return (result,tcs.length);
+    }
 
     function getATC(uint256 id) external view returns(TCInfo memory) {
         uint256 index = findTCIndex(id);
@@ -2681,6 +2864,30 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
 
     function getWorkingShifts() external view returns(WorkingShift[] memory) {
         return workingShifts;
+    }
+    function GetWorkingShiftsPagination(uint256 offset, uint256 limit)
+        external
+        view
+        returns (WorkingShift[] memory result,uint totalCount)
+    {
+        if(offset >= workingShifts.length) {
+            return ( new WorkingShift[](0),workingShifts.length);
+        }
+
+        uint256 end = offset + limit;
+        if (end > workingShifts.length) {
+            end = workingShifts.length;
+        }
+
+        uint256 size = end - offset;
+        result = new WorkingShift[](size);
+
+        for (uint256 i = 0; i < size; i++) {
+            uint256 reverseIndex = workingShifts.length - 1 - offset - i;
+            result[i] = workingShifts[reverseIndex];
+        }
+
+        return (result,workingShifts.length);
     }
 
     function getAWorkingShift(uint256 id) external view returns(WorkingShift memory) {
@@ -2741,6 +2948,31 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
     function getUniforms() external view returns(Uniform[] memory) {
         return uniforms;
     }
+    function GetUniformsPagination(uint256 offset, uint256 limit)
+        external
+        view
+        returns (Uniform[] memory result,uint totalCount)
+    {
+        if(offset >= uniforms.length) {
+            return ( new Uniform[](0),uniforms.length);
+        }
+
+        uint256 end = offset + limit;
+        if (end > uniforms.length) {
+            end = uniforms.length;
+        }
+
+        uint256 size = end - offset;
+        result = new Uniform[](size);
+
+        for (uint256 i = 0; i < size; i++) {
+            uint256 reverseIndex = uniforms.length - 1 - offset - i;
+            result[i] = uniforms[reverseIndex];
+        }
+
+        return (result,uniforms.length);
+    }
+
 
     function getAUniform(uint256 id) external view returns(Uniform memory) {
         uint256 index = findUniformIndex(id);
@@ -2927,7 +3159,7 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
     //DishOptions Management
     // ================= CREATE DISH OPTIONS (UPDATED) =================
     function CreateDishOptions(
-        string memory dishCode,
+        // string memory dishCode,
         string memory _optionName,
         string[] memory _featureNames,
         uint256[] memory _featurePrices,
@@ -2939,10 +3171,10 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
         require(_featureNames.length == _featurePrices.length, "features and prices length mismatch");
         // require(_maximumSelection > 0, "maximum selection is required");
         require(_isCompulsory == false || _maximumSelection >= 1, "maximum selection must be at least 1 if option is compulsory");
-        
-        bytes32 _optionId = keccak256(abi.encodePacked(block.timestamp, dishCode, _optionName));
+        require(!isOptionNameExist[_optionName],"option name existed");
+        bytes32 _optionId = keccak256(abi.encodePacked(block.timestamp, _optionName));
 
-        DishOption storage newOption = mDishCodeToOptions[dishCode].push();
+        DishOption storage newOption = mIdToOption[_optionId];
         newOption.optionId = _optionId;
         newOption.optionName = _optionName;
         newOption.isCompulsory = _isCompulsory;
@@ -2956,19 +3188,57 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
                 featureName: _featureNames[i],
                 featurePrice: _featurePrices[i]
             }));
-            mDishCodeToFeatureIds[dishCode][_optionName].push(featureId);
+            // mDishCodeToFeatureIds[dishCode][_optionName].push(featureId);
         }
+        allDishOptions.push(newOption);
+        allOptionNames.push(_optionName);
+        isOptionNameExist[_optionName] = true;
         return _optionId;
     }
-    function getFeatureIdsAFromDishCode(
+    function _batchChooseOption(
         string memory dishCode,
-        string memory _optionName
-    ) external view returns(bytes32[] memory){
-        return  mDishCodeToFeatureIds[dishCode][_optionName];
+        bytes32[] memory _optionIds
+        // bytes32 _featureId
+    )internal{
+        for (uint i = 0; i < _optionIds.length; i++) {
+            _chooseOption(dishCode, _optionIds[i]);
+        }
+    }
+    function _chooseOption(
+        string memory dishCode,
+        bytes32 _optionId
+        // bytes32 _featureId
+    )internal{
+        string memory _optionName = mIdToOption[_optionId].optionName;
+        require(isOptionNameExist[_optionName],"option not found");
+        mDishCodeToOptionNames[dishCode].push(_optionName);
+        // mDishCodeToFeatureIds[dishCode][_optionName].push(_featureId);
+        mDishCodeToOptions[dishCode].push(mIdToOption[_optionId]);
+         // add reverse mapping but avoid duplicate
+        string[] storage dishList = mOptionIdToDishCodes[_optionId];
+        bool exists = false;
+        for (uint i = 0; i < dishList.length; i++) {
+            if (keccak256(bytes(dishList[i])) == keccak256(bytes(dishCode))) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists) {
+            mOptionIdToDishCodes[_optionId].push(dishCode);
+        }
+    }
+    // function getFeatureIdsAFromDishCode(
+    //     string memory dishCode,
+    //     string memory _optionName
+    // ) external view returns(bytes32[] memory){
+    //     return  mDishCodeToFeatureIds[dishCode][_optionName];
+    // }
+    function getOptionNamesFromDishCode(string memory dishCode) public view returns(string[] memory){
+        return mDishCodeToOptionNames[dishCode];
     }
     // Update DishOption by optionId
     function updateDishOption(
-        string memory _dishCode,
+        // string memory _dishCode,
         bytes32 _optionId,
         string memory _optionName,
         string[] memory _featureNames,
@@ -2976,95 +3246,267 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
         bool _isCompulsory,
         uint _maximumSelection
     ) external onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE) {
-        require(bytes(_optionName).length > 0, "option name is required");
-        require(_featureNames.length > 0, "features is required");
+        // require(bytes(_optionName).length > 0, "option name is required");
+        // require(_featureNames.length > 0, "features is required");   
         require(_featureNames.length == _featurePrices.length, "features and prices length mismatch");
         require(_maximumSelection > 0, "maximum selection is required");
         require(!_isCompulsory || _maximumSelection >= 1, "max selection at least 1 if compulsory");
         
-        DishOption[] storage dishOptions = mDishCodeToOptions[_dishCode];
-        require(dishOptions.length > 0, "Dish not found");
+        DishOption storage dishOption = mIdToOption[_optionId];
+        require(dishOption.optionId != bytes32(0), "DishOption not found");
 
-        bool found = false;
-        for (uint i = 0; i < dishOptions.length; i++) {
-            if (dishOptions[i].optionId == _optionId) {
-                dishOptions[i].optionName = _optionName;
-                dishOptions[i].isCompulsory = _isCompulsory;
-                dishOptions[i].maximumSelection = _maximumSelection;
-                
-                // Reset and rebuild features
-                delete dishOptions[i].features;
-                for (uint j = 0; j < _featureNames.length; j++) {
-                    bytes32 featureId = keccak256(abi.encodePacked(_optionId, _featureNames[j], j));
-                    dishOptions[i].features.push(OptionFeature({
-                        featureId: featureId,
-                        featureName: _featureNames[j],
-                        featurePrice: _featurePrices[j]
-                    }));
-                }
-                found = true;
-                break;
-            }
-        }
-        require(found, "DishOption not found");
-    }
-    // Delete DishOption by optionId
-    function DeleteDishOption(string memory dishCode, bytes32 optionId)
-        external
-        onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE)
-    {
-        DishOption[] storage options = mDishCodeToOptions[dishCode];
-        bool found = false;
+        string memory oldNameOption = dishOption.optionName;
+        require(bytes(oldNameOption).length > 0,"old option not found");
 
-        for (uint i = 0; i < options.length; i++) {
-            if (options[i].optionId == optionId) {
-                // xóa phần tử i bằng cách swap với phần tử cuối
-                options[i] = options[options.length - 1];
-                options.pop();
-                found = true;
-                break;
-            }
-        }
-        
-        require(found, "option not found");
-        DishOption memory dishOption= GetDishOptionById(dishCode,optionId);
-        delete  mDishCodeToFeatureIds[dishCode][dishOption.optionName];
-    }
-    function GetDishOptionById(
-        string memory dishCode,
-        bytes32 optionId
-    ) public view returns (DishOption memory) {
-        DishOption[] storage options = mDishCodeToOptions[dishCode];
-        for (uint i = 0; i < options.length; i++) {
-            if (options[i].optionId == optionId) {
-                return options[i];
-            }
-        }
-        revert("option not found");
-    }
-    function GetDishOptionByIds(
-        string memory dishCode,
-        bytes32[] memory optionIds
-    ) external view returns (DishOption[] memory) {
-        require(optionIds.length > 0, "optionIds array cannot be empty");
-        
-        DishOption[] storage allOptions = mDishCodeToOptions[dishCode];
-        DishOption[] memory result = new DishOption[](optionIds.length);
-        
-        for (uint i = 0; i < optionIds.length; i++) {
-            bool found = false;
-            for (uint j = 0; j < allOptions.length; j++) {
-                if (allOptions[j].optionId == optionIds[i]) {
-                    result[i] = allOptions[j];
-                    found = true;
+        if(bytes(_optionName).length > 0 &&
+            keccak256(abi.encodePacked(_optionName)) != keccak256(abi.encodePacked(oldNameOption)))
+        {
+            require(!isOptionNameExist[_optionName],"new option name existed");
+            dishOption.optionName = _optionName;
+            isOptionNameExist[_optionName] = true;
+            isOptionNameExist[oldNameOption] = false;
+            for(uint i; i< allOptionNames.length; i++){
+                if( keccak256(abi.encodePacked(allOptionNames[i])) == keccak256(abi.encodePacked(oldNameOption))){
+                    allOptionNames[i] = _optionName;
                     break;
                 }
             }
-            require(found, "Option not found");
         }
-        return result;
-    }   
+        dishOption.isCompulsory = _isCompulsory;
+        dishOption.maximumSelection = _maximumSelection;
+        
+        // Reset and rebuild features
+        delete dishOption.features;
+        if(_featureNames.length > 0) {
+            for (uint j = 0; j < _featureNames.length; j++) {
+                bytes32 featureId = keccak256(abi.encodePacked(_optionId, _featureNames[j], j));
+                dishOption.features.push(OptionFeature({
+                    featureId: featureId,
+                    featureName: _featureNames[j],
+                    featurePrice: _featurePrices[j]
+                }));
+            }
+        }
+        for(uint i; i < allDishOptions.length; i++){
+            if(allDishOptions[i].optionId == _optionId){
+                allDishOptions[i] = dishOption;
+                break;
+            }
+        }
+         // ✅ THÊM: Update in all dishes using this option
+        string[] memory dishCodes = mOptionIdToDishCodes[_optionId];
+        for(uint i = 0; i < dishCodes.length; i++) {
+            string memory dishCode = dishCodes[i];
+            DishOption[] storage dishOptions = mDishCodeToOptions[dishCode];
+            
+            // Find and update the option in this dish
+            for(uint j = 0; j < dishOptions.length; j++) {
+                if(dishOptions[j].optionId == _optionId) {
+                    dishOptions[j] = dishOption;
+                    break;
+                }
+            }
+            
+            // ✅ THÊM: Update option name in mDishCodeToOptionNames if changed
+            if(bytes(_optionName).length > 0 &&
+                keccak256(abi.encodePacked(_optionName)) != keccak256(abi.encodePacked(oldNameOption)))
+            {
+                string[] storage optionNames = mDishCodeToOptionNames[dishCode];
+                for(uint k = 0; k < optionNames.length; k++) {
+                    if(keccak256(abi.encodePacked(optionNames[k])) == keccak256(abi.encodePacked(oldNameOption))) {
+                        optionNames[k] = _optionName;
+                        break;
+                    }
+                }
+            }
+        }
+        
+    }
+
+        //xoa toan bo option cu, them danh sach option moi
+    function BatchAddOptionToDish(
+        string memory dishCode,
+        bytes32[] memory optionIds
+    ) external onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE) {
+        // 1) remove reverse links for existing options
+        for (uint i = 0; i < mDishCodeToOptions[dishCode].length; i++) {
+            bytes32 oldOptionId = mDishCodeToOptions[dishCode][i].optionId;
+            _removeDishFromOptionReverse(oldOptionId, dishCode);
+        }
+        //delete all old optionIds first
+        delete mDishCodeToOptions[dishCode];  
+        delete mDishCodeToOptionNames[dishCode];
+        //add new optionIds Array
+        for(uint i; i < optionIds.length; i++){
+            _addOptionToDish(dishCode,optionIds[i]);
+        }
+    }
+    // --- helper: remove dishCode from optionId -> dishCodes list (if present)
+    function _removeDishFromOptionReverse(bytes32 optionId, string memory dishCode) internal {
+        string[] storage dishCodes = mOptionIdToDishCodes[optionId];
+        for (uint i = 0; i < dishCodes.length; i++) {
+            if (keccak256(bytes(dishCodes[i])) == keccak256(bytes(dishCode))) {
+                dishCodes[i] = dishCodes[dishCodes.length - 1];
+                dishCodes.pop();
+                break;
+            }
+        }
+    }
+    // Thêm hàm helper để thêm option vào dish (sau khi dish đã được tạo)
+    function _addOptionToDish(
+        string memory dishCode,
+        bytes32 optionId
+    ) internal {
+        require(bytes(mCodeToDish[dishCode].code).length > 0, "Dish not found");
+        require(mIdToOption[optionId].optionId != bytes32(0), "Option not found");
+        
+        string memory optionName = mIdToOption[optionId].optionName;
+        
+        // ✅ Check xem option đã được thêm vào dish chưa
+        string[] storage existingNames = mDishCodeToOptionNames[dishCode];
+        for(uint i = 0; i < existingNames.length; i++) {
+            require(
+                keccak256(abi.encodePacked(existingNames[i])) != keccak256(abi.encodePacked(optionName)),
+                "Option already added to this dish"
+            );
+        }
+        
+        _chooseOption(dishCode, optionId);
+    }
+
+
+    function getOptionNameFromId(bytes32 _optionId) public view returns(string memory){
+        DishOption memory option = mIdToOption[_optionId];
+        require(option.optionId != bytes32(0),"dish option not exist");
+        return option.optionName;
+    }
+    function getAllOptionNames()external view returns(string[] memory){
+        return allOptionNames;
+    }
+    // Delete DishOption by optionId
+    function DeleteDishOption(bytes32 optionId)
+        external
+        onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE)
+    {
+        string memory nameOption = getOptionNameFromId(optionId);
+        require(bytes(nameOption).length > 0, "Option not found");
+
+        isOptionNameExist[nameOption] = false;
+
+        bool found = false;
+        for (uint i = 0; i < allDishOptions.length; i++) {
+            if (allDishOptions[i].optionId == optionId) {
+                // xóa phần tử i bằng cách swap với phần tử cuối
+                allDishOptions[i] = allDishOptions[allDishOptions.length - 1];
+                allDishOptions.pop();
+                found = true;
+                break;
+            }
+        }
+        require(found, "optionId not found");
+        
+        found = false;
+        for (uint i = 0; i < allOptionNames.length; i++) {
+            if (keccak256(abi.encodePacked(allOptionNames[i])) == keccak256(abi.encodePacked(nameOption))) {
+                // xóa phần tử i bằng cách swap với phần tử cuối
+                allOptionNames[i] = allOptionNames[allOptionNames.length - 1];
+                allOptionNames.pop();
+                found = true;
+                break;
+            }
+        }
+        require(found, "option name not found in allOptionNames");
+
+        string[] memory dishCodes = mOptionIdToDishCodes[optionId];
+        for(uint i; i< dishCodes.length; i++){
+            if(mDishCodeToOptionNames[dishCodes[i]].length > 0){
+                _deleteDishOptionFromDishCode(dishCodes[i],optionId);
+
+            }
+        }
+        delete mIdToOption[optionId];
+
+    }
+    function DeleteDishOptionFromDishCode(string memory dishCode,bytes32 optionId)
+        public
+        onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE)
+        
+    {
+        _deleteDishOptionFromDishCode(dishCode,optionId);
+    }
+
+    function _deleteDishOptionFromDishCode(string memory dishCode,bytes32 optionId)
+        internal
+    {
+        require(mIdToOption[optionId].optionId != bytes32(0), "Option not found");
+        string[] storage optionNames = mDishCodeToOptionNames[dishCode];
+        string memory optionNameInput = getOptionNameFromId(optionId);
+        bool found = false;
+
+        for (uint i = 0; i < optionNames.length; i++) {
+            
+            if (keccak256(abi.encodePacked(optionNames[i])) == keccak256(abi.encodePacked(optionNameInput))) {
+                // xóa phần tử i bằng cách swap với phần tử cuối
+                optionNames[i] = optionNames[optionNames.length - 1];
+                optionNames.pop();
+                found = true;
+                break;
+            }
+        }
+        require(found, "option name not found in mDishCodeToOptionNames");
+
+        found = false;
+        DishOption[] storage dishOptions = mDishCodeToOptions[dishCode];
+        for (uint i = 0; i < dishOptions.length; i++) {
+            if (dishOptions[i].optionId == optionId) {
+                // xóa phần tử i bằng cách swap với phần tử cuối
+                dishOptions[i] = dishOptions[dishOptions.length - 1];
+                dishOptions.pop();
+                found = true;
+                break;
+            }
+        }
+        require(found, "optionId not found");
+    }
+
+    function GetDishOptionById(
+        bytes32 optionId
+    ) public view returns (DishOption memory) {
+        return mIdToOption[optionId];
+    }
+    function GetAllDishOptions() external view returns (DishOption[] memory) {
+        return allDishOptions;
+    }
     // ------------------- GET ALL PAGINATION -------------------
+    function GetAllDishOptionsPagination(
+        uint offset,
+        uint limit
+    ) external view returns (DishOption[] memory, uint totalCount) {
+        totalCount = allDishOptions.length;
+
+        if (offset >= totalCount) {
+            return (new DishOption[](0) , totalCount);
+        }
+
+        uint end = offset + limit;
+        if (end > totalCount) end = totalCount;
+        uint count = end - offset;
+
+        DishOption[] memory result = new DishOption[](count);
+        for (uint i = 0; i < count; i++) {
+            uint reverseIndex = totalCount -1 - offset - i;
+            result[i] = allDishOptions[reverseIndex];
+        }
+
+        return (result, totalCount);
+    }
+
+    function GetAllDishOptionsFromDishCode(
+        string memory dishCode
+    ) external view returns (DishOption[] memory) {
+        return mDishCodeToOptions[dishCode];
+    }
+
     function GetAllDishOptionsFromDishCodePagination(
         string memory dishCode,
         uint offset,
@@ -3090,13 +3532,163 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
         return (result, totalCount);
     }
 
-    function CalculateAndValidateOptions(
-            string memory dishCode,
-            SelectedOption[] memory selectedOptions
-    ) external view returns (uint totalOptionsPrice, string[] memory featureNames) {
-        DishOption[] storage allOptions = mDishCodeToOptions[dishCode];
+    // function CalculateAndValidateOptions(
+    //     string memory dishCode,
+    //     SelectedOption[] memory selectedOptions
+    // ) external view returns (uint totalOptionsPrice, string[] memory featureNames) {
+    //     DishOption[] storage allOptions = mDishCodeToOptions[dishCode];
+    //     // console.log("dishCode:",dishCode);
+    //     require(allOptions.length > 0, "Dish has no options configured");
         
-        // Count total features to initialize array
+    //     // Count total features
+    //     uint totalFeaturesCount = 0;
+    //     for (uint i = 0; i < selectedOptions.length; i++) {
+    //         totalFeaturesCount += selectedOptions[i].selectedFeatureIds.length;
+    //     }
+        
+    //     featureNames = new string[](totalFeaturesCount);
+    //     uint featureIndex = 0;
+        
+    //     // Count compulsory options
+    //     uint compulsoryCount = 0;
+    //     for (uint i = 0; i < allOptions.length; i++) {
+    //         if (allOptions[i].isCompulsory) {
+    //             compulsoryCount++;
+    //         }
+    //     }
+        
+    //     if (selectedOptions.length == 0) {
+    //         require(compulsoryCount == 0, "Missing compulsory options");
+    //         return (0, featureNames);
+    //     }
+        
+    //     uint selectedCompulsoryCount = 0;
+        
+    //     // Process each selected option
+    //     for (uint i = 0; i < selectedOptions.length; i++) {
+    //         bytes32 optionId = selectedOptions[i].optionId;
+    //         bytes32[] memory featureIds = selectedOptions[i].selectedFeatureIds;
+    //         uint featureCount = featureIds.length;
+            
+    //         require(featureCount > 0, "Option must have at least one feature");
+            
+    //         // ✅ Check duplicate selected option (so sánh với các option trước đó)
+    //         for (uint m = 0; m < i; m++) {
+    //             require(selectedOptions[m].optionId != optionId, "Duplicate option selected");
+    //         }
+            
+    //         // Find option in allOptions
+    //         bool optionFound = false;
+    //         for (uint j = 0; j < allOptions.length; j++) {
+    //             // console.log("allOptions.length:",allOptions.length);
+    //             if (allOptions[j].optionId == optionId) {
+    //                 // console.log("allOptions[j].optionId == optionId",allOptions[j].optionName);
+    //                 // console.logBytes32(allOptions[j].optionId);
+    //                 optionFound = true;
+    //                 DishOption storage currentOption = allOptions[j];
+    //                  require(currentOption.features.length > 0, "Option has no features");
+    //                 // Track compulsory
+    //                 if (currentOption.isCompulsory) {
+    //                     selectedCompulsoryCount++;
+    //                     require(featureCount >= 1, "Compulsory option needs at least 1 feature");
+    //                 }
+                    
+    //                 // Validate maximum selection
+    //                 require(featureCount <= currentOption.maximumSelection, 
+    //                     "Exceeded maximum selection");
+                    
+    //                 OptionFeature[] storage features = currentOption.features;
+                    
+    //                 // ✅ Check duplicate features và calculate price
+    //                 for (uint k = 0; k < featureCount; k++) {
+    //                     bytes32 searchFeatureId = featureIds[k];
+                        
+    //                     // Check duplicate feature trong cùng option
+    //                     for (uint n = 0; n < k; n++) {
+    //                         require(featureIds[n] != searchFeatureId, "Duplicate feature in option");
+    //                     }
+                        
+    //                     // Find feature và calculate price
+    //                     bool featureFound = false;
+    //                     for (uint l = 0; l < features.length; l++) {
+    //                         // console.log("aaaaaaaaaaa");
+    //                         // console.logBytes32(features[l].featureId);
+    //                         // console.logBytes32(searchFeatureId);
+    //                         if (features[l].featureId == searchFeatureId) {
+    //                             totalOptionsPrice += features[l].featurePrice;
+    //                             featureNames[featureIndex] = features[l].featureName;
+    //                             featureIndex++;
+    //                             featureFound = true;
+    //                             break;
+    //                         }
+    //                     }
+    //                     require(featureFound, "Invalid feature ID");
+    //                 }
+    //                 break;
+    //             }
+    //         }
+    //         require(optionFound, "Option not found in dish");
+    //     }
+    //     // // ✅ Validate và calculate features
+    //     // OptionFeature[] storage features = currentOption.features;
+        
+    //     // for (uint k = 0; k < featureIds.length; k++) {
+    //     //     bytes32 searchFeatureId = featureIds[k];
+            
+    //     //     // ✅ Check duplicate feature trong cùng option
+    //     //     for (uint n = 0; n < k; n++) {
+    //     //         require(featureIds[n] != searchFeatureId, "Duplicate feature in option");
+    //     //     }
+            
+    //     //     // Find feature và calculate price
+    //     //     bool featureFound = false;
+    //     //     for (uint l = 0; l < features.length; l++) {
+    //     //         if (features[l].featureId == searchFeatureId) {
+    //     //             totalOptionsPrice += features[l].featurePrice;
+    //     //             featureNames[featureIndex] = features[l].featureName;
+    //     //             featureIndex++;
+    //     //             featureFound = true;
+    //     //             break;
+    //     //         }
+    //     //     }
+    //     //     require(featureFound, "Invalid feature ID");
+    //     // }
+        
+    //     // ✅ Validate tất cả compulsory options đã được chọn
+    //     require(selectedCompulsoryCount == compulsoryCount, "Missing compulsory options");
+        
+    //     // ✅ Resize featureNames nếu cần (không cần thiết nhưng để code clean hơn)
+    //     if (featureIndex < totalFeaturesCount) {
+    //         string[] memory resizedNames = new string[](featureIndex);
+    //         for (uint i = 0; i < featureIndex; i++) {
+    //             resizedNames[i] = featureNames[i];
+    //         }
+    //         return (totalOptionsPrice, resizedNames);
+    //     }
+    // } 
+
+function CalculateAndValidateOptions(
+        string memory dishCode,
+        SelectedOption[] memory selectedOptions
+) external view returns (uint totalOptionsPrice, string[] memory featureNames) {
+        DishOption[] storage allOptions = mDishCodeToOptions[dishCode];
+        require(allOptions.length > 0, "Dish has no options configured");
+        
+        // Count compulsory options in dish
+        uint compulsoryCount = 0;
+        for (uint i = 0; i < allOptions.length; i++) {
+            if (allOptions[i].isCompulsory) {
+                compulsoryCount++;
+            }
+        }
+        
+        // If no options selected
+        if (selectedOptions.length == 0) {
+            require(compulsoryCount == 0, "Missing compulsory options");
+            return (0, new string[](0));
+        }
+        
+        // Count total features for array initialization
         uint totalFeaturesCount = 0;
         for (uint i = 0; i < selectedOptions.length; i++) {
             totalFeaturesCount += selectedOptions[i].selectedFeatureIds.length;
@@ -3104,80 +3696,136 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
         
         featureNames = new string[](totalFeaturesCount);
         uint featureIndex = 0;
-        
-        if (selectedOptions.length == 0) {
-            // Check if there are any compulsory options
-            for (uint i = 0; i < allOptions.length; i++) {
-                require(!allOptions[i].isCompulsory, 
-                    string(abi.encodePacked("Compulsory option missing: ", allOptions[i].optionName)));
-            }
-            return (0, featureNames);
-        }
-        
-        // Create bitmap to track which compulsory options are selected (max 256 options)
-        uint256 compulsoryBitmap = 0;
-        uint compulsoryCount = 0;
-        
-        // First pass: identify compulsory options and create bitmap
-        for (uint i = 0; i < allOptions.length; i++) {
-            if (allOptions[i].isCompulsory) {
-                compulsoryBitmap |= (1 << i);
-                compulsoryCount++;
-            }
-        }
-        
         uint selectedCompulsoryCount = 0;
         
-        // Second pass: process selected options (validate + calculate price + collect feature names)
+        // Validate each selected option
         for (uint i = 0; i < selectedOptions.length; i++) {
             bytes32 optionId = selectedOptions[i].optionId;
             bytes32[] memory featureIds = selectedOptions[i].selectedFeatureIds;
-            uint featureCount = featureIds.length;
             
-            require(featureCount > 0, "Option must have at least one feature selected");
+            // Check minimum features
+            require(featureIds.length > 0, "Option must have at least one feature selected");
             
-            // Find the option (only once per selected option)
-            bool optionFound = false;
-            for (uint j = 0; j < allOptions.length; j++) {
-                if (allOptions[j].optionId == optionId) {
-                    optionFound = true;
-                    
-                    // Check if this is a compulsory option
-                    if ((compulsoryBitmap & (1 << j)) != 0) {
-                        selectedCompulsoryCount++;
-                    }
-                    
-                    // Validate maximum selection
-                    require(featureCount <= allOptions[j].maximumSelection, 
-                        "Exceeded maximum selection");
-                    
-                    // Calculate price, validate features, and collect feature names in single loop
-                    OptionFeature[] storage features = allOptions[j].features;
-                    uint featuresLength = features.length;
-                    
-                    for (uint k = 0; k < featureCount; k++) {
-                        bool featureFound = false;
-                        bytes32 searchFeatureId = featureIds[k];
-                        
-                        // Search features
-                        for (uint l = 0; l < featuresLength; l++) {
-                            if (features[l].featureId == searchFeatureId) {
-                                totalOptionsPrice += features[l].featurePrice;
-                                featureNames[featureIndex] = features[l].featureName;
-                                featureIndex++;
-                                featureFound = true;
-                                break;
-                            }
-                        }
-                        require(featureFound, "Invalid feature ID");
-                    }
-                    break;
-                }
+            // Check duplicate option selection
+            _checkDuplicateOption(selectedOptions, i);
+            
+            // Find and validate option
+            DishOption storage currentOption = _findOption(allOptions, optionId);
+            
+            // Validate and process option
+            _validateOptionSelection(currentOption, featureIds);
+            
+            // Track compulsory
+            if (currentOption.isCompulsory) {
+                selectedCompulsoryCount++;
             }
-            require(optionFound, "Option not found");
+            
+            // Calculate price and collect feature names
+            (uint optionPrice, string[] memory optionFeatureNames) = _calculateOptionPrice(
+                currentOption,
+                featureIds
+            );
+            
+            totalOptionsPrice += optionPrice;
+            
+            // Copy feature names
+            for (uint k = 0; k < optionFeatureNames.length; k++) {
+                featureNames[featureIndex] = optionFeatureNames[k];
+                featureIndex++;
+            }
         }
         
-        // Final check: all compulsory options must be selected
-        require(selectedCompulsoryCount == compulsoryCount, "Some compulsory options are missing");
+        // Validate all compulsory options selected
+        require(selectedCompulsoryCount == compulsoryCount, "Missing compulsory options");
+        
+        return (totalOptionsPrice, featureNames);
+}
+
+// Helper function: Check duplicate option
+function _checkDuplicateOption(
+    SelectedOption[] memory selectedOptions,
+    uint currentIndex
+) private pure {
+    bytes32 currentOptionId = selectedOptions[currentIndex].optionId;
+    for (uint i = 0; i < currentIndex; i++) {
+        require(
+            selectedOptions[i].optionId != currentOptionId,
+            "Duplicate option selected"
+        );
     }
+}
+
+// Helper function: Find option in dish
+function _findOption(
+    DishOption[] storage allOptions,
+    bytes32 optionId
+) private view returns (DishOption storage) {
+    for (uint i = 0; i < allOptions.length; i++) {
+        if (allOptions[i].optionId == optionId) {
+            require(allOptions[i].features.length > 0, "Option has no features");
+            return allOptions[i];
+        }
+    }
+    revert("Option not found in dish");
+}
+
+// Helper function: Validate option selection
+function _validateOptionSelection(
+    DishOption storage option,
+    bytes32[] memory featureIds
+) private view {
+    uint featureCount = featureIds.length;
+    
+    // Check compulsory has at least 1 feature
+    if (option.isCompulsory) {
+        require(featureCount >= 1, "Compulsory option needs at least 1 feature");
+    }
+    
+    // Check maximum selection
+    require(
+        featureCount <= option.maximumSelection,
+        string(abi.encodePacked(
+            "Exceeded maximum selection for option: ",
+            option.optionName
+        ))
+    );
+    
+    // Check duplicate features
+    for (uint i = 0; i < featureCount; i++) {
+        for (uint j = 0; j < i; j++) {
+            require(
+                featureIds[i] != featureIds[j],
+                "Duplicate feature in same option"
+            );
+        }
+    }
+}
+
+// Helper function: Calculate price and get feature names
+function _calculateOptionPrice(
+    DishOption storage option,
+    bytes32[] memory featureIds
+) private view returns (uint totalPrice, string[] memory names) {
+    names = new string[](featureIds.length);
+    
+    for (uint i = 0; i < featureIds.length; i++) {
+        bool found = false;
+        
+        for (uint j = 0; j < option.features.length; j++) {
+            if (option.features[j].featureId == featureIds[i]) {
+                totalPrice += option.features[j].featurePrice;
+                names[i] = option.features[j].featureName;
+                found = true;
+                break;
+            }
+        }
+        
+        require(found, string(abi.encodePacked(
+            "Invalid feature ID in option: ",
+            option.optionName
+        )));
+    }
+    
+    return (totalPrice, names);
+}
 }

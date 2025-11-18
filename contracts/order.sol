@@ -315,7 +315,7 @@
 //         mTableToCoursePrice[table][course.id] = coursePrice;
 //     }
 
-// function _createOrUpdatePayment(
+//     function _createOrUpdatePayment(
 //         uint table,
 //         bytes32 orderId,
 //         uint totalPrice

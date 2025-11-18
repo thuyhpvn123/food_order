@@ -1,0 +1,1 @@
+[{"inputs":[{"internalType":"address","name":"_agent","type":"address"}],"name":"CheckAgentExisted","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"}]

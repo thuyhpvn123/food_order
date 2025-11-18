@@ -67,6 +67,9 @@ contract RestaurantReporting is
     mapping(string => bool) public dishIsNew;
     mapping(string => mapping(uint => uint)) public dishDailyRevenue; // dishCode => date => revenue
     mapping(string => mapping(uint => uint)) public dishDailyOrders; // dishCode => date => orders
+    mapping(string => mapping(uint => uint)) public dishMonthlyRevenue; // dishCode => date => revenue
+    mapping(string => mapping(uint => uint)) public dishMonthlyOrders; // dishCode => date => orders
+
     // Basic tracking for reports - split into smaller mappings
     mapping(uint => uint) public dailyRevenue;
     mapping(uint => uint) public dailyOrders;
@@ -156,8 +159,12 @@ contract RestaurantReporting is
         orderCreatedTimes[dishCode].push(createdAt);
         orderCreatedTimesSet[dishCode] = true;
         uint date = _getDay(createdAt);
+        uint month = _getMonth(createdAt);
         dishDailyRevenue[dishCode][date] += revenue;
         dishDailyOrders[dishCode][date] += orders;
+        dishMonthlyRevenue[dishCode][month] += revenue;
+        dishMonthlyOrders[dishCode][month] += orders;
+
     }
     function GetOrderCreatedTimes(
         string memory dishCode,
@@ -365,7 +372,7 @@ contract RestaurantReporting is
         
         return _calculateBasicComparison(current, previous);
     }
-
+    // vd tháng 1 trùyen la 1, năm 2025 truyen la 2025
     function GetMonthlyComparison(uint currentMonth, uint previousMonth,uint realCurrentYear,uint realPreviousYear) 
         external view returns (ReportComparison memory comparison) 
     {
@@ -496,7 +503,46 @@ contract RestaurantReporting is
     }
 
     // Dish comparison  rank 
-    function GetDishComparison(
+    function GetDishRankMonthlyComparison(
+        string memory dishCode,
+        uint currentStartPeriod, //date
+        uint currentEndPeriod,
+        uint previousStartPeriod, //date
+        uint previousEndPeriod
+     ) external view returns (DishComparison memory comparison) {
+        (,,uint currentAverragetRank,) = GetDishPerformanceSummary(dishCode,currentStartPeriod, currentEndPeriod);
+        (,,uint previousAverragetRank,) = GetDishPerformanceSummary(dishCode, previousStartPeriod,previousEndPeriod);
+        
+        comparison.currentRanking = currentAverragetRank;
+        comparison.previousRanking = previousAverragetRank;
+        
+        if (comparison.previousRanking > 0) {
+            if (comparison.currentRanking < comparison.previousRanking) {
+                comparison.rankingChange = comparison.previousRanking - comparison.currentRanking;
+                comparison.rankingImproved = true;
+            } else if (comparison.currentRanking > comparison.previousRanking) {
+                comparison.rankingChange = comparison.currentRanking - comparison.previousRanking;
+                comparison.rankingImproved = false;
+            }
+        }
+        DishMonthlyReport memory current = GetDishMonthlyReport(dishCode, currentEndPeriod/30);
+        (DishWithFirstPrice[] memory currentTopDishesMonthly,) = MANAGEMENT.Get5TopDishesByTime(currentEndPeriod/30,false);
+         uint bestSellerOrderCount ;
+        if(currentTopDishesMonthly.length >0){
+            bestSellerOrderCount= currentTopDishesMonthly[0].dish.orderNum; 
+        }
+        // Order count comparison
+        if (bestSellerOrderCount > 0) {
+            if (current.orderCount >= bestSellerOrderCount) {
+                comparison.orderCountGrowthPercent = ((current.orderCount - bestSellerOrderCount) * 100) / bestSellerOrderCount;
+                comparison.orderCountGrowthPositive = true;
+            } else {
+                comparison.orderCountGrowthPercent = ((bestSellerOrderCount - current.orderCount) * 100) / bestSellerOrderCount;
+                comparison.orderCountGrowthPositive = false;
+            }
+        }
+    }
+    function GetDishRankDailyComparison(
         string memory dishCode,
         uint currentPeriod,
         uint previousPeriod
@@ -516,14 +562,19 @@ contract RestaurantReporting is
                 comparison.rankingImproved = false;
             }
         }
+        (DishWithFirstPrice[] memory currentTopDishes,) = MANAGEMENT.Get5TopDishesByTime(currentPeriod,true);
+        uint bestSellerOrderCount;
+        if(currentTopDishes.length >0){
+            bestSellerOrderCount = currentTopDishes[0].dish.orderNum; 
+        }
         
-        // Order count comparison
-        if (previous.orderCount > 0) {
-            if (current.orderCount >= previous.orderCount) {
-                comparison.orderCountGrowthPercent = ((current.orderCount - previous.orderCount) * 100) / previous.orderCount;
+        // Order count comparison with bestSeller
+        if (bestSellerOrderCount > 0) {
+            if (current.orderCount >= bestSellerOrderCount) {
+                comparison.orderCountGrowthPercent = ((current.orderCount - bestSellerOrderCount) * 100) / bestSellerOrderCount;
                 comparison.orderCountGrowthPositive = true;
             } else {
-                comparison.orderCountGrowthPercent = ((previous.orderCount - current.orderCount) * 100) / previous.orderCount;
+                comparison.orderCountGrowthPercent = ((bestSellerOrderCount - bestSellerOrderCount) * 100) / bestSellerOrderCount;
                 comparison.orderCountGrowthPositive = false;
             }
         }
@@ -709,7 +760,7 @@ contract RestaurantReporting is
         string memory dishCode,
         uint startPeriod,
         uint endPeriod
-    ) external view returns (
+    ) public view returns (
         uint totalRevenue,
         uint totalOrders,
         uint averageRanking,
@@ -1026,6 +1077,16 @@ contract RestaurantReporting is
             twiceOrderCustomers: 0  // Would need additional tracking
         });
     }
+    function GetDishMonthlyReport(string memory dishCode, uint month) public view returns (DishMonthlyReport memory) {
+        return DishMonthlyReport({
+            month: month,
+            revenue: dishMonthlyRevenue[dishCode][month],
+            orderCount: dishMonthlyOrders[dishCode][month],
+            onceOrderCustomers: 0, // Would need additional tracking
+            twiceOrderCustomers: 0  // Would need additional tracking
+        });
+    }
+
     // Helper functions
     function _getDay(uint timestamp) internal pure returns (uint) {
         return timestamp / 86400;

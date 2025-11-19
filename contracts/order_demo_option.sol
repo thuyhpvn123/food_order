@@ -291,8 +291,9 @@ contract RestaurantOrder is
         // require(MANAGEMENT.IsDishEnough(dishCode, quantity), "Insufficient stock");
     
         // Calculate additional price from options
-         (uint optionsPrice, string[] memory featureNames) = MANAGEMENT.CalculateAndValidateOptions(dishCode, selectedOptions);
-        
+        //  (uint optionsPrice, string[] memory featureNames) = MANAGEMENT.CalculateAndValidateOptions(dishCode, selectedOptions);
+          (uint optionsPrice, OptionSelected[] memory optionsSelected) = MANAGEMENT.CalculateAndValidateOptions(dishCode, selectedOptions);
+       
         // Validate compulsory options
         uint dishPrice = orderVariant.dishPrice;
         SimpleCourse memory course = SimpleCourse({
@@ -304,7 +305,8 @@ contract RestaurantOrder is
             status: COURSE_STATUS.ORDERED,
             imgUrl:imgUrl,
             note:note,
-            featureNames: featureNames
+            // featureNames: featureNames
+            optionsSelected: optionsSelected
         });
         mOrderIdToCourses[orderId].push(course);
         mTableToCourses[table].push(course);

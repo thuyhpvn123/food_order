@@ -163,7 +163,8 @@ struct SimpleCourse {
     COURSE_STATUS status;
     string imgUrl;
     string note;
-    string[] featureNames;
+    // string[] featureNames;
+    OptionSelected[] optionsSelected;
 }
 
 struct Order {
@@ -531,5 +532,9 @@ struct SelectedOption {
     bytes32 optionId;
     bytes32[] selectedFeatureIds;  // Multiple features can be selected per option
 }
+struct OptionSelected {
+    string optionName;
+    string[] selectedFeatureNames;
+} 
 
 

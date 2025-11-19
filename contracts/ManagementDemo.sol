@@ -3667,78 +3667,145 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
     //     }
     // } 
 
+//     function CalculateAndValidateOptions(
+//         string memory dishCode,
+//         SelectedOption[] memory selectedOptions
+//     ) external view returns (uint totalOptionsPrice, string[] memory featureNames) {
+//         DishOption[] storage allOptions = mDishCodeToOptions[dishCode];
+//         require(allOptions.length > 0, "Dish has no options configured");
+        
+//         // Count compulsory options in dish
+//         uint compulsoryCount = 0;
+//         for (uint i = 0; i < allOptions.length; i++) {
+//             if (allOptions[i].isCompulsory) {
+//                 compulsoryCount++;
+//             }
+//         }
+        
+//         // If no options selected
+//         if (selectedOptions.length == 0) {
+//             require(compulsoryCount == 0, "Missing compulsory options");
+//             return (0, new string[](0));
+//         }
+        
+//         // Count total features for array initialization
+//         uint totalFeaturesCount = 0;
+//         for (uint i = 0; i < selectedOptions.length; i++) {
+//             totalFeaturesCount += selectedOptions[i].selectedFeatureIds.length;
+//         }
+        
+//         featureNames = new string[](totalFeaturesCount);
+//         uint featureIndex = 0;
+//         uint selectedCompulsoryCount = 0;
+        
+//         // Validate each selected option
+//         for (uint i = 0; i < selectedOptions.length; i++) {
+//             bytes32 optionId = selectedOptions[i].optionId;
+//             bytes32[] memory featureIds = selectedOptions[i].selectedFeatureIds;
+            
+//             // Check minimum features
+//             require(featureIds.length > 0, "Option must have at least one feature selected");
+            
+//             // Check duplicate option selection
+//             _checkDuplicateOption(selectedOptions, i);
+            
+//             // Find and validate option
+//             DishOption storage currentOption = _findOption(allOptions, optionId);
+            
+//             // Validate and process option
+//             _validateOptionSelection(currentOption, featureIds);
+            
+//             // Track compulsory
+//             if (currentOption.isCompulsory) {
+//                 selectedCompulsoryCount++;
+//             }
+            
+//             // Calculate price and collect feature names
+//             (uint optionPrice, string[] memory optionFeatureNames) = _calculateOptionPrice(
+//                 currentOption,
+//                 featureIds
+//             );
+            
+//             totalOptionsPrice += optionPrice;
+            
+//             // Copy feature names
+//             for (uint k = 0; k < optionFeatureNames.length; k++) {
+//                 featureNames[featureIndex] = optionFeatureNames[k];
+//                 featureIndex++;
+//             }
+//         }
+        
+//         // Validate all compulsory options selected
+//         require(selectedCompulsoryCount == compulsoryCount, "Missing compulsory options");
+        
+//         return (totalOptionsPrice, featureNames);
+// }
 function CalculateAndValidateOptions(
-        string memory dishCode,
-        SelectedOption[] memory selectedOptions
-) external view returns (uint totalOptionsPrice, string[] memory featureNames) {
-        DishOption[] storage allOptions = mDishCodeToOptions[dishCode];
-        require(allOptions.length > 0, "Dish has no options configured");
+    string memory dishCode,
+    SelectedOption[] memory selectedOptions
+) external view returns (uint totalOptionsPrice, OptionSelected[] memory optionsSelected) {
+    DishOption[] storage allOptions = mDishCodeToOptions[dishCode];
+    require(allOptions.length > 0, "Dish has no options configured");
+    
+    // Count compulsory options in dish
+    uint compulsoryCount = 0;
+    for (uint i = 0; i < allOptions.length; i++) {
+        if (allOptions[i].isCompulsory) {
+            compulsoryCount++;
+        }
+    }
+    
+    // If no options selected
+    if (selectedOptions.length == 0) {
+        require(compulsoryCount == 0, "Missing compulsory options");
+        return (0, new OptionSelected[](0));
+    }
+    
+    // Initialize optionsSelected array
+    optionsSelected = new OptionSelected[](selectedOptions.length);
+    uint selectedCompulsoryCount = 0;
+    
+    // Validate each selected option
+    for (uint i = 0; i < selectedOptions.length; i++) {
+        bytes32 optionId = selectedOptions[i].optionId;
+        bytes32[] memory featureIds = selectedOptions[i].selectedFeatureIds;
         
-        // Count compulsory options in dish
-        uint compulsoryCount = 0;
-        for (uint i = 0; i < allOptions.length; i++) {
-            if (allOptions[i].isCompulsory) {
-                compulsoryCount++;
-            }
+        // Check minimum features
+        require(featureIds.length > 0, "Option must have at least one feature selected");
+        
+        // Check duplicate option selection
+        _checkDuplicateOption(selectedOptions, i);
+        
+        // Find and validate option
+        DishOption storage currentOption = _findOption(allOptions, optionId);
+        
+        // Validate and process option
+        _validateOptionSelection(currentOption, featureIds);
+        
+        // Track compulsory
+        if (currentOption.isCompulsory) {
+            selectedCompulsoryCount++;
         }
         
-        // If no options selected
-        if (selectedOptions.length == 0) {
-            require(compulsoryCount == 0, "Missing compulsory options");
-            return (0, new string[](0));
-        }
+        // Calculate price and collect feature names
+        (uint optionPrice, string[] memory featureNames) = _calculateOptionPrice(
+            currentOption,
+            featureIds
+        );
         
-        // Count total features for array initialization
-        uint totalFeaturesCount = 0;
-        for (uint i = 0; i < selectedOptions.length; i++) {
-            totalFeaturesCount += selectedOptions[i].selectedFeatureIds.length;
-        }
+        totalOptionsPrice += optionPrice;
         
-        featureNames = new string[](totalFeaturesCount);
-        uint featureIndex = 0;
-        uint selectedCompulsoryCount = 0;
-        
-        // Validate each selected option
-        for (uint i = 0; i < selectedOptions.length; i++) {
-            bytes32 optionId = selectedOptions[i].optionId;
-            bytes32[] memory featureIds = selectedOptions[i].selectedFeatureIds;
-            
-            // Check minimum features
-            require(featureIds.length > 0, "Option must have at least one feature selected");
-            
-            // Check duplicate option selection
-            _checkDuplicateOption(selectedOptions, i);
-            
-            // Find and validate option
-            DishOption storage currentOption = _findOption(allOptions, optionId);
-            
-            // Validate and process option
-            _validateOptionSelection(currentOption, featureIds);
-            
-            // Track compulsory
-            if (currentOption.isCompulsory) {
-                selectedCompulsoryCount++;
-            }
-            
-            // Calculate price and collect feature names
-            (uint optionPrice, string[] memory optionFeatureNames) = _calculateOptionPrice(
-                currentOption,
-                featureIds
-            );
-            
-            totalOptionsPrice += optionPrice;
-            
-            // Copy feature names
-            for (uint k = 0; k < optionFeatureNames.length; k++) {
-                featureNames[featureIndex] = optionFeatureNames[k];
-                featureIndex++;
-            }
-        }
-        
-        // Validate all compulsory options selected
-        require(selectedCompulsoryCount == compulsoryCount, "Missing compulsory options");
-        
-        return (totalOptionsPrice, featureNames);
+        // Build OptionSelected struct
+        optionsSelected[i] = OptionSelected({
+            optionName: currentOption.optionName,
+            selectedFeatureNames: featureNames
+        });
+    }
+    
+    // Validate all compulsory options selected
+    require(selectedCompulsoryCount == compulsoryCount, "Missing compulsory options");
+    
+    return (totalOptionsPrice, optionsSelected);
 }
 
 // Helper function: Check duplicate option
@@ -3828,4 +3895,91 @@ function _calculateOptionPrice(
     
     return (totalPrice, names);
 }
+// // Helper function: Check duplicate option
+// function _checkDuplicateOption(
+//     SelectedOption[] memory selectedOptions,
+//     uint currentIndex
+// ) private pure {
+//     bytes32 currentOptionId = selectedOptions[currentIndex].optionId;
+//     for (uint i = 0; i < currentIndex; i++) {
+//         require(
+//             selectedOptions[i].optionId != currentOptionId,
+//             "Duplicate option selected"
+//         );
+//     }
+// }
+
+// // Helper function: Find option in dish
+// function _findOption(
+//     DishOption[] storage allOptions,
+//     bytes32 optionId
+// ) private view returns (DishOption storage) {
+//     for (uint i = 0; i < allOptions.length; i++) {
+//         if (allOptions[i].optionId == optionId) {
+//             require(allOptions[i].features.length > 0, "Option has no features");
+//             return allOptions[i];
+//         }
+//     }
+//     revert("Option not found in dish");
+// }
+
+// // Helper function: Validate option selection
+// function _validateOptionSelection(
+//     DishOption storage option,
+//     bytes32[] memory featureIds
+// ) private view {
+//     uint featureCount = featureIds.length;
+    
+//     // Check compulsory has at least 1 feature
+//     if (option.isCompulsory) {
+//         require(featureCount >= 1, "Compulsory option needs at least 1 feature");
+//     }
+    
+//     // Check maximum selection
+//     require(
+//         featureCount <= option.maximumSelection,
+//         string(abi.encodePacked(
+//             "Exceeded maximum selection for option: ",
+//             option.optionName
+//         ))
+//     );
+    
+//     // Check duplicate features
+//     for (uint i = 0; i < featureCount; i++) {
+//         for (uint j = 0; j < i; j++) {
+//             require(
+//                 featureIds[i] != featureIds[j],
+//                 "Duplicate feature in same option"
+//             );
+//         }
+//     }
+// }
+
+// // Helper function: Calculate price and get feature names
+// function _calculateOptionPrice(
+//     DishOption storage option,
+//     bytes32[] memory featureIds
+// ) private view returns (uint totalPrice, string[] memory names) {
+//     names = new string[](featureIds.length);
+    
+//     for (uint i = 0; i < featureIds.length; i++) {
+//         bool found = false;
+        
+//         for (uint j = 0; j < option.features.length; j++) {
+//             if (option.features[j].featureId == featureIds[i]) {
+//                 totalPrice += option.features[j].featurePrice;
+//                 names[i] = option.features[j].featureName;
+//                 found = true;
+//                 break;
+//             }
+//         }
+        
+//         require(found, string(abi.encodePacked(
+//             "Invalid feature ID in option: ",
+//             option.optionName
+//         )));
+//     }
+    
+//     return (totalPrice, names);
+// }
 }

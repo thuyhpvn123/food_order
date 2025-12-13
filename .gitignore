@@ -22,5 +22,9 @@ output_order_noOption
 output_ManagementDemo
 output_order_demo
 output_order_demo_option
+output_staffMatch
+output_order_v2
+output_order_new
+output_branchManager1
 .deploys
 bin

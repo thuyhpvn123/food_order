@@ -115,11 +115,17 @@ contract Management is
     mapping(string => bool) public isOptionNameExist;
     bool public active;
     address public agentIQRSC;
+    address public branchManagement;
     ChartTotalOrder[] public totalOrderDays;
+    uint public branchId;
     uint256[49] private __gap;
 
     constructor() {
         _disableInitializers();
+    }
+    modifier onlyBranchManager{
+        require(msg.sender == branchManagement,"only branchManagement can call");
+        _;
     }
     modifier onlyAdminAndRole(STAFF_ROLE role){
         require(
@@ -136,6 +142,10 @@ contract Management is
         require(active,"Contract is deactivated");
         _;
     }
+    function setBranchManagement(address _branchManagement) external {
+        require(msg.sender == agentIQRSC,"only agentIQRSC can call");
+        branchManagement = _branchManagement;
+    }
     function setActive(bool _active) external  {
         require(msg.sender == agentIQRSC,"only agentIQRSC can call");
         active = _active;
@@ -143,8 +153,9 @@ contract Management is
     function setStaffAgentStore(address _staffAgentSC)external onlyRole(ROLE_ADMIN){
         staffAgentStore = IStaffAgentStore(_staffAgentSC);
     }
-    function setAgentAdd(address _agent) external onlyRole(ROLE_ADMIN){
+    function setAgentAdd(address _agent,uint _branchId) external onlyRole(ROLE_ADMIN){
         agent = _agent;
+        branchId = _branchId;
     }
     function setTimeKeeping(address _timeKeeping) external onlyRole(ROLE_ADMIN) {
         timeKeeping = _timeKeeping;
@@ -238,7 +249,9 @@ contract Management is
         restaurantInfo.walletAddress = _walletAddress;
         restaurantInfo.updatedAt = block.timestamp;
     }
-
+    function setRoleForCoOwner(address _coOwner)external onlyBranchManager{
+        _grantRole(ROLE_ADMIN,_coOwner); 
+    }
     function CreateStaff(
         Staff memory staff
     )external onlyAdminAndRole(STAFF_ROLE.STAFF_MANAGE) isActive {
@@ -268,12 +281,9 @@ contract Management is
             _grantRole(roleHash, staff.wallet);
         }    
         if(address(staffAgentStore) != address(0) && agent != address(0)){
-            staffAgentStore.setAgent(staff.wallet,agent);
+            staffAgentStore.setAgent(staff.wallet,agent,branchId);
 
         }
-    }
-    function getAgentFromStaff(address _staffWallet)external view returns(address){
-
     }
     // Hàm helper để validate roles của staff
     function _validateStaffRoles(string memory _position, STAFF_ROLE[] memory _staffRoles) 
@@ -474,7 +484,6 @@ contract Management is
     function GetActiveStaffByDate(uint date) external view returns (Staff[] memory) {
         uint dayKey = _getDay(date);
         address[] memory activeAddresses = dailyActiveStaff[dayKey];
-        
         // Count valid active staff
         uint validCount = 0;
         for (uint i = 0; i < activeAddresses.length; i++) {
@@ -589,7 +598,6 @@ contract Management is
                 validCount++;
             }
         }
-        
         // Build result array
         address[] memory result = new address[](validCount);
         uint index = 0;
@@ -601,7 +609,6 @@ contract Management is
                 index++;
             }
         }
-        
         return result;
     }
 
@@ -727,7 +734,8 @@ contract Management is
             status: TABLE_STATUS.EMPTY,
             paymentId: bytes32(0),
             active: _active,
-            name: _name
+            name: _name,
+            area: mIdToArea[_areaId]
         });
         mNumberToTable[_number] = table;
         tables.push(table);
@@ -795,21 +803,35 @@ contract Management is
         mNumberToTable[_number].numPeople = _numPeople;
         mNumberToTable[_number].active = _active;
         mNumberToTable[_number].name = _name;
+        mNumberToTable[_number].area = mIdToArea[_newAreaId];
         for(uint i;i<tables.length;i++){
             if(keccak256(abi.encodePacked(tables[i].number ))== keccak256(abi.encodePacked(_number))){
                 tables[i] = mNumberToTable[_number];
+                break;
             }
         }
-        if(_newAreaId >0){
-            require(mIdToArea[_newAreaId].id != 0,"this area id does not exist");
-            uint oldAreaId = mTableToAreaId[_number];        
-            mAreaToTable[_newAreaId].push(mNumberToTable[_number]);
+        
+        uint oldAreaId = mTableToAreaId[_number];
+        if( oldAreaId != _newAreaId){
+            require(mIdToArea[_newAreaId].id != 0,"this area id does not exist");                   
             Table[] storage tablesArea = mAreaToTable[oldAreaId];
             for(uint i; i<tablesArea.length ;i++){
                 if(tablesArea[i].number == _number){
                     tablesArea[i] = tablesArea[tablesArea.length -1];
                     tablesArea.pop();
+                    break;
                 }
+            }
+            mAreaToTable[_newAreaId].push(mNumberToTable[_number]);
+            mTableToAreaId[_number] = _newAreaId;
+
+        }else{
+            for (uint i; i< mAreaToTable[oldAreaId].length; i++){
+                if(mAreaToTable[oldAreaId][i].number == _number){
+                    mAreaToTable[oldAreaId][i] = mNumberToTable[_number];
+                    break;
+                }
+
             }
 
         }
@@ -2084,6 +2106,28 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
                 dish.ingredients.push(_ingredients[i]);
             }        
         }
+        if (dishesWithOrder.length > 0) {
+            uint256 stored = dishOrderIndex[_codeDish];
+            bool updated = false;
+
+            // trường hợp đúng chuẩn: stored > 0 và stored là index+1
+            if (stored > 0) {
+                uint256 idx = stored - 1;
+                if (idx < dishesWithOrder.length) {
+                    // kiểm tra chắc chắn cùng dish
+                    if (keccak256(abi.encodePacked(dishesWithOrder[idx].dish.code)) == keccak256(abi.encodePacked(_codeDish))) {
+                        dishesWithOrder[idx].dish = mCodeToDish[_codeDish];
+                        // cập nhật variant + attributes nếu có variant hiện thời (lấy variant[0])
+                        if (mDishVariant[_codeDish].length > 0) {
+                            bytes32 v0 = mDishVariant[_codeDish][0];
+                            dishesWithOrder[idx].variant = mVariant[_codeDish][v0];
+                            dishesWithOrder[idx].attributes = mVariantAttributes[_codeDish][v0];
+                        }
+                        updated = true;
+                    }
+                }
+            }
+        }
         return true;
     }
     function RemoveDish(
@@ -2209,7 +2253,8 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
         DiscountType _discountType,
         bytes32[] memory _targetGroupIds,
         uint _pointCost,
-        bool _isRedeemable
+        bool _isRedeemable,
+        string memory _textDes
     )external onlyRole(ROLE_ADMIN){
         require(bytes(_code).length >0,"code of discount can not be empty");
         require(bytes(mCodeToDiscount[_code].code).length == 0,"code of discount existed");
@@ -2244,7 +2289,8 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
             discountType: _discountType,
             targetGroupIds: _targetGroupIds,
             pointCost: _pointCost,
-            isRedeemable: _isRedeemable
+            isRedeemable: _isRedeemable,
+            textDes: _textDes
         });
         discounts.push(mCodeToDiscount[_code]);
     }
@@ -2271,13 +2317,14 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
         DiscountType _discountType,
         bytes32[] memory _targetGroupIds,
         uint _pointCost,
-        bool _isRedeemable
+        bool _isRedeemable,
+        string memory _textDes
     )external onlyRole(ROLE_ADMIN) isActive{
         require(bytes(_code).length >0,"code of discount can not be empty");
         require(bytes(mCodeToDiscount[_code].code).length > 0,"can not find any discount");
         require(_amountMax > 0 && _discountPercent > 0 ,"maximum number and percent of discount can be zero" );
         require(_discountPercent <= 100, "discount percent need to be less than 100");
-        require(_from >= block.timestamp && _to > block.timestamp,"time is not valid");
+        // require(_from >= block.timestamp && _to > block.timestamp,"time is not valid");
         require(_amountMax >= mCodeToDiscount[_code].amountUsed , 
                 "number of maximum can not be less than number discount used");
          if (_discountType == DiscountType.AUTO_GROUP) {
@@ -2287,22 +2334,31 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
         if (_isRedeemable) {
             require(_pointCost > 0, "Point cost required");
         }
-        mCodeToDiscount[_code].name = _name;
-        mCodeToDiscount[_code].discountPercent = _discountPercent;
-        mCodeToDiscount[_code].desc = _desc;
-        mCodeToDiscount[_code].from = _from;
-        mCodeToDiscount[_code].to = _to;
-        mCodeToDiscount[_code].active = _active;
-        mCodeToDiscount[_code].imgURL = _imgURL;
-        mCodeToDiscount[_code].amountMax = _amountMax;
-        mCodeToDiscount[_code].discountType = _discountType;
-        mCodeToDiscount[_code].targetGroupIds = _targetGroupIds;
-        mCodeToDiscount[_code].pointCost = _pointCost;
-        mCodeToDiscount[_code].isRedeemable = _isRedeemable;
-        mCodeToDiscount[_code].updatedAt = block.timestamp;
+        Discount storage discount = mCodeToDiscount[_code];
+        // Check if sensitive fields changed (requires voting)
+        bool needsVoting = (
+            _discountPercent != discount.discountPercent ||
+            _amountMax != discount.amountMax ||
+            _pointCost != discount.pointCost ||
+            _isRedeemable != discount.isRedeemable
+        );
+        discount.name = _name;
+        discount.discountPercent = _discountPercent;
+        discount.desc = _desc;
+        discount.from = _from;
+        discount.to = _to;
+        discount.active = _active;
+        discount.imgURL = _imgURL;
+        discount.amountMax = _amountMax;
+        discount.discountType = _discountType;
+        discount.targetGroupIds = _targetGroupIds;
+        discount.pointCost = _pointCost;
+        discount.isRedeemable = _isRedeemable;
+        discount.updatedAt = block.timestamp;
+        discount.textDes =  _textDes;
         for(uint i;i<discounts.length;i++){
             if(keccak256(abi.encodePacked(discounts[i].code ))== keccak256(abi.encodePacked(_code))){
-                discounts[i] = mCodeToDiscount[_code];
+                discounts[i] = discount;
             }
         }
     }
@@ -2364,10 +2420,33 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
         }));
     }
         // Function for RestaurantOrder to get basic discount info
-    function GetDiscountBasic(string memory code) external view returns (uint discountPercent, bool active, uint amountUsed, uint amountMax, uint from, uint to) {
+    // function GetDiscountBasic(string memory code) external view returns (uint discountPercent, bool active, uint amountUsed, uint amountMax, uint from, uint to) {
+    //     Discount memory discount = mCodeToDiscount[code];
+    //     return (discount.discountPercent, discount.active, discount.amountUsed, discount.amountMax, discount.from, discount.to);
+    // }
+    function GetDiscountBasic(string memory code) external view returns (
+        uint discountPercent, 
+        bool active, 
+        uint amountUsed, 
+        uint amountMax, 
+        uint from, 
+        uint to,
+        DiscountType discountType,
+        bytes32[] memory targetGroupIds
+    ) {
         Discount memory discount = mCodeToDiscount[code];
-        return (discount.discountPercent, discount.active, discount.amountUsed, discount.amountMax, discount.from, discount.to);
+        return (
+            discount.discountPercent, 
+            discount.active, 
+            discount.amountUsed, 
+            discount.amountMax, 
+            discount.from, 
+            discount.to,
+            discount.discountType,
+            discount.targetGroupIds
+        );
     }
+
     // // Lấy danh sách discounts tự động(all+ group) cho user
     // function GetAutoDiscountsForUser(address _user, bytes32 _userGroup) external view returns (Discount[] memory) {
     //     uint count = 0;
@@ -3172,6 +3251,7 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
         // require(_maximumSelection > 0, "maximum selection is required");
         require(_isCompulsory == false || _maximumSelection >= 1, "maximum selection must be at least 1 if option is compulsory");
         require(!isOptionNameExist[_optionName],"option name existed");
+        require(_maximumSelection <= _featureNames.length," _maximumSelection is over number of features");
         bytes32 _optionId = keccak256(abi.encodePacked(block.timestamp, _optionName));
 
         DishOption storage newOption = mIdToOption[_optionId];
@@ -3506,7 +3586,11 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
     ) external view returns (DishOption[] memory) {
         return mDishCodeToOptions[dishCode];
     }
-
+    function checkShowOption(string memory _dishCode) external view returns(bool){
+        if(mDishVariant[_dishCode].length > 1) return true;
+        DishOption[] storage allOptions = mDishCodeToOptions[_dishCode];
+        if(allOptions.length >= 1) return true;
+    }
     function GetAllDishOptionsFromDishCodePagination(
         string memory dishCode,
         uint offset,
@@ -3532,454 +3616,162 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
         return (result, totalCount);
     }
 
-    // function CalculateAndValidateOptions(
-    //     string memory dishCode,
-    //     SelectedOption[] memory selectedOptions
-    // ) external view returns (uint totalOptionsPrice, string[] memory featureNames) {
-    //     DishOption[] storage allOptions = mDishCodeToOptions[dishCode];
-    //     // console.log("dishCode:",dishCode);
-    //     require(allOptions.length > 0, "Dish has no options configured");
-        
-    //     // Count total features
-    //     uint totalFeaturesCount = 0;
-    //     for (uint i = 0; i < selectedOptions.length; i++) {
-    //         totalFeaturesCount += selectedOptions[i].selectedFeatureIds.length;
-    //     }
-        
-    //     featureNames = new string[](totalFeaturesCount);
-    //     uint featureIndex = 0;
-        
-    //     // Count compulsory options
-    //     uint compulsoryCount = 0;
-    //     for (uint i = 0; i < allOptions.length; i++) {
-    //         if (allOptions[i].isCompulsory) {
-    //             compulsoryCount++;
-    //         }
-    //     }
-        
-    //     if (selectedOptions.length == 0) {
-    //         require(compulsoryCount == 0, "Missing compulsory options");
-    //         return (0, featureNames);
-    //     }
-        
-    //     uint selectedCompulsoryCount = 0;
-        
-    //     // Process each selected option
-    //     for (uint i = 0; i < selectedOptions.length; i++) {
-    //         bytes32 optionId = selectedOptions[i].optionId;
-    //         bytes32[] memory featureIds = selectedOptions[i].selectedFeatureIds;
-    //         uint featureCount = featureIds.length;
-            
-    //         require(featureCount > 0, "Option must have at least one feature");
-            
-    //         // ✅ Check duplicate selected option (so sánh với các option trước đó)
-    //         for (uint m = 0; m < i; m++) {
-    //             require(selectedOptions[m].optionId != optionId, "Duplicate option selected");
-    //         }
-            
-    //         // Find option in allOptions
-    //         bool optionFound = false;
-    //         for (uint j = 0; j < allOptions.length; j++) {
-    //             // console.log("allOptions.length:",allOptions.length);
-    //             if (allOptions[j].optionId == optionId) {
-    //                 // console.log("allOptions[j].optionId == optionId",allOptions[j].optionName);
-    //                 // console.logBytes32(allOptions[j].optionId);
-    //                 optionFound = true;
-    //                 DishOption storage currentOption = allOptions[j];
-    //                  require(currentOption.features.length > 0, "Option has no features");
-    //                 // Track compulsory
-    //                 if (currentOption.isCompulsory) {
-    //                     selectedCompulsoryCount++;
-    //                     require(featureCount >= 1, "Compulsory option needs at least 1 feature");
-    //                 }
-                    
-    //                 // Validate maximum selection
-    //                 require(featureCount <= currentOption.maximumSelection, 
-    //                     "Exceeded maximum selection");
-                    
-    //                 OptionFeature[] storage features = currentOption.features;
-                    
-    //                 // ✅ Check duplicate features và calculate price
-    //                 for (uint k = 0; k < featureCount; k++) {
-    //                     bytes32 searchFeatureId = featureIds[k];
-                        
-    //                     // Check duplicate feature trong cùng option
-    //                     for (uint n = 0; n < k; n++) {
-    //                         require(featureIds[n] != searchFeatureId, "Duplicate feature in option");
-    //                     }
-                        
-    //                     // Find feature và calculate price
-    //                     bool featureFound = false;
-    //                     for (uint l = 0; l < features.length; l++) {
-    //                         // console.log("aaaaaaaaaaa");
-    //                         // console.logBytes32(features[l].featureId);
-    //                         // console.logBytes32(searchFeatureId);
-    //                         if (features[l].featureId == searchFeatureId) {
-    //                             totalOptionsPrice += features[l].featurePrice;
-    //                             featureNames[featureIndex] = features[l].featureName;
-    //                             featureIndex++;
-    //                             featureFound = true;
-    //                             break;
-    //                         }
-    //                     }
-    //                     require(featureFound, "Invalid feature ID");
-    //                 }
-    //                 break;
-    //             }
-    //         }
-    //         require(optionFound, "Option not found in dish");
-    //     }
-    //     // // ✅ Validate và calculate features
-    //     // OptionFeature[] storage features = currentOption.features;
-        
-    //     // for (uint k = 0; k < featureIds.length; k++) {
-    //     //     bytes32 searchFeatureId = featureIds[k];
-            
-    //     //     // ✅ Check duplicate feature trong cùng option
-    //     //     for (uint n = 0; n < k; n++) {
-    //     //         require(featureIds[n] != searchFeatureId, "Duplicate feature in option");
-    //     //     }
-            
-    //     //     // Find feature và calculate price
-    //     //     bool featureFound = false;
-    //     //     for (uint l = 0; l < features.length; l++) {
-    //     //         if (features[l].featureId == searchFeatureId) {
-    //     //             totalOptionsPrice += features[l].featurePrice;
-    //     //             featureNames[featureIndex] = features[l].featureName;
-    //     //             featureIndex++;
-    //     //             featureFound = true;
-    //     //             break;
-    //     //         }
-    //     //     }
-    //     //     require(featureFound, "Invalid feature ID");
-    //     // }
-        
-    //     // ✅ Validate tất cả compulsory options đã được chọn
-    //     require(selectedCompulsoryCount == compulsoryCount, "Missing compulsory options");
-        
-    //     // ✅ Resize featureNames nếu cần (không cần thiết nhưng để code clean hơn)
-    //     if (featureIndex < totalFeaturesCount) {
-    //         string[] memory resizedNames = new string[](featureIndex);
-    //         for (uint i = 0; i < featureIndex; i++) {
-    //             resizedNames[i] = featureNames[i];
-    //         }
-    //         return (totalOptionsPrice, resizedNames);
-    //     }
-    // } 
-
-//     function CalculateAndValidateOptions(
-//         string memory dishCode,
-//         SelectedOption[] memory selectedOptions
-//     ) external view returns (uint totalOptionsPrice, string[] memory featureNames) {
-//         DishOption[] storage allOptions = mDishCodeToOptions[dishCode];
-//         require(allOptions.length > 0, "Dish has no options configured");
-        
-//         // Count compulsory options in dish
-//         uint compulsoryCount = 0;
-//         for (uint i = 0; i < allOptions.length; i++) {
-//             if (allOptions[i].isCompulsory) {
-//                 compulsoryCount++;
-//             }
-//         }
-        
-//         // If no options selected
-//         if (selectedOptions.length == 0) {
-//             require(compulsoryCount == 0, "Missing compulsory options");
-//             return (0, new string[](0));
-//         }
-        
-//         // Count total features for array initialization
-//         uint totalFeaturesCount = 0;
-//         for (uint i = 0; i < selectedOptions.length; i++) {
-//             totalFeaturesCount += selectedOptions[i].selectedFeatureIds.length;
-//         }
-        
-//         featureNames = new string[](totalFeaturesCount);
-//         uint featureIndex = 0;
-//         uint selectedCompulsoryCount = 0;
-        
-//         // Validate each selected option
-//         for (uint i = 0; i < selectedOptions.length; i++) {
-//             bytes32 optionId = selectedOptions[i].optionId;
-//             bytes32[] memory featureIds = selectedOptions[i].selectedFeatureIds;
-            
-//             // Check minimum features
-//             require(featureIds.length > 0, "Option must have at least one feature selected");
-            
-//             // Check duplicate option selection
-//             _checkDuplicateOption(selectedOptions, i);
-            
-//             // Find and validate option
-//             DishOption storage currentOption = _findOption(allOptions, optionId);
-            
-//             // Validate and process option
-//             _validateOptionSelection(currentOption, featureIds);
-            
-//             // Track compulsory
-//             if (currentOption.isCompulsory) {
-//                 selectedCompulsoryCount++;
-//             }
-            
-//             // Calculate price and collect feature names
-//             (uint optionPrice, string[] memory optionFeatureNames) = _calculateOptionPrice(
-//                 currentOption,
-//                 featureIds
-//             );
-            
-//             totalOptionsPrice += optionPrice;
-            
-//             // Copy feature names
-//             for (uint k = 0; k < optionFeatureNames.length; k++) {
-//                 featureNames[featureIndex] = optionFeatureNames[k];
-//                 featureIndex++;
-//             }
-//         }
-        
-//         // Validate all compulsory options selected
-//         require(selectedCompulsoryCount == compulsoryCount, "Missing compulsory options");
-        
-//         return (totalOptionsPrice, featureNames);
-// }
-function CalculateAndValidateOptions(
-    string memory dishCode,
-    SelectedOption[] memory selectedOptions
-) external view returns (uint totalOptionsPrice, OptionSelected[] memory optionsSelected) {
-    DishOption[] storage allOptions = mDishCodeToOptions[dishCode];
-    require(allOptions.length > 0, "Dish has no options configured");
-    
-    // Count compulsory options in dish
-    uint compulsoryCount = 0;
-    for (uint i = 0; i < allOptions.length; i++) {
-        if (allOptions[i].isCompulsory) {
-            compulsoryCount++;
+    function CalculateAndValidateOptions(
+        string memory dishCode,
+        SelectedOption[] memory selectedOptions
+    ) external view returns (uint totalOptionsPrice, OptionSelected[] memory optionsSelected) {
+        DishOption[] storage allOptions = mDishCodeToOptions[dishCode];
+        // require(allOptions.length > 0, "Dish has no options configured");
+        if(allOptions.length == 0){
+            return (0, new OptionSelected[](0));
         }
-    }
-    
-    // If no options selected
-    if (selectedOptions.length == 0) {
-        require(compulsoryCount == 0, "Missing compulsory options");
-        return (0, new OptionSelected[](0));
-    }
-    
-    // Initialize optionsSelected array
-    optionsSelected = new OptionSelected[](selectedOptions.length);
-    uint selectedCompulsoryCount = 0;
-    
-    // Validate each selected option
-    for (uint i = 0; i < selectedOptions.length; i++) {
-        bytes32 optionId = selectedOptions[i].optionId;
-        bytes32[] memory featureIds = selectedOptions[i].selectedFeatureIds;
-        
-        // Check minimum features
-        require(featureIds.length > 0, "Option must have at least one feature selected");
-        
-        // Check duplicate option selection
-        _checkDuplicateOption(selectedOptions, i);
-        
-        // Find and validate option
-        DishOption storage currentOption = _findOption(allOptions, optionId);
-        
-        // Validate and process option
-        _validateOptionSelection(currentOption, featureIds);
-        
-        // Track compulsory
-        if (currentOption.isCompulsory) {
-            selectedCompulsoryCount++;
-        }
-        
-        // Calculate price and collect feature names
-        (uint optionPrice, string[] memory featureNames) = _calculateOptionPrice(
-            currentOption,
-            featureIds
-        );
-        
-        totalOptionsPrice += optionPrice;
-        
-        // Build OptionSelected struct
-        optionsSelected[i] = OptionSelected({
-            optionName: currentOption.optionName,
-            selectedFeatureNames: featureNames
-        });
-    }
-    
-    // Validate all compulsory options selected
-    require(selectedCompulsoryCount == compulsoryCount, "Missing compulsory options");
-    
-    return (totalOptionsPrice, optionsSelected);
-}
-
-// Helper function: Check duplicate option
-function _checkDuplicateOption(
-    SelectedOption[] memory selectedOptions,
-    uint currentIndex
-) private pure {
-    bytes32 currentOptionId = selectedOptions[currentIndex].optionId;
-    for (uint i = 0; i < currentIndex; i++) {
-        require(
-            selectedOptions[i].optionId != currentOptionId,
-            "Duplicate option selected"
-        );
-    }
-}
-
-// Helper function: Find option in dish
-function _findOption(
-    DishOption[] storage allOptions,
-    bytes32 optionId
-) private view returns (DishOption storage) {
-    for (uint i = 0; i < allOptions.length; i++) {
-        if (allOptions[i].optionId == optionId) {
-            require(allOptions[i].features.length > 0, "Option has no features");
-            return allOptions[i];
-        }
-    }
-    revert("Option not found in dish");
-}
-
-// Helper function: Validate option selection
-function _validateOptionSelection(
-    DishOption storage option,
-    bytes32[] memory featureIds
-) private view {
-    uint featureCount = featureIds.length;
-    
-    // Check compulsory has at least 1 feature
-    if (option.isCompulsory) {
-        require(featureCount >= 1, "Compulsory option needs at least 1 feature");
-    }
-    
-    // Check maximum selection
-    require(
-        featureCount <= option.maximumSelection,
-        string(abi.encodePacked(
-            "Exceeded maximum selection for option: ",
-            option.optionName
-        ))
-    );
-    
-    // Check duplicate features
-    for (uint i = 0; i < featureCount; i++) {
-        for (uint j = 0; j < i; j++) {
-            require(
-                featureIds[i] != featureIds[j],
-                "Duplicate feature in same option"
-            );
-        }
-    }
-}
-
-// Helper function: Calculate price and get feature names
-function _calculateOptionPrice(
-    DishOption storage option,
-    bytes32[] memory featureIds
-) private view returns (uint totalPrice, string[] memory names) {
-    names = new string[](featureIds.length);
-    
-    for (uint i = 0; i < featureIds.length; i++) {
-        bool found = false;
-        
-        for (uint j = 0; j < option.features.length; j++) {
-            if (option.features[j].featureId == featureIds[i]) {
-                totalPrice += option.features[j].featurePrice;
-                names[i] = option.features[j].featureName;
-                found = true;
-                break;
+        // Count compulsory options in dish
+        uint compulsoryCount = 0;
+        for (uint i = 0; i < allOptions.length; i++) {
+            if (allOptions[i].isCompulsory) {
+                compulsoryCount++;
             }
         }
         
-        require(found, string(abi.encodePacked(
-            "Invalid feature ID in option: ",
-            option.optionName
-        )));
+        // If no options selected
+        if (selectedOptions.length == 0) {
+            require(compulsoryCount == 0, "Missing compulsory options");
+            return (0, new OptionSelected[](0));
+        }
+        
+        // Initialize optionsSelected array
+        optionsSelected = new OptionSelected[](selectedOptions.length);
+        uint selectedCompulsoryCount = 0;
+        
+        // Validate each selected option
+        for (uint i = 0; i < selectedOptions.length; i++) {
+            bytes32 optionId = selectedOptions[i].optionId;
+            bytes32[] memory featureIds = selectedOptions[i].selectedFeatureIds;
+            
+            // Check minimum features
+            require(featureIds.length > 0, "Option must have at least one feature selected");
+            
+            // Check duplicate option selection
+            _checkDuplicateOption(selectedOptions, i);
+            
+            // Find and validate option
+            DishOption storage currentOption = _findOption(allOptions, optionId);
+            
+            // Validate and process option
+            _validateOptionSelection(currentOption, featureIds);
+            
+            // Track compulsory
+            if (currentOption.isCompulsory) {
+                selectedCompulsoryCount++;
+            }
+            
+            // Calculate price and collect feature names
+            (uint optionPrice, string[] memory featureNames) = _calculateOptionPrice(
+                currentOption,
+                featureIds
+            );
+            
+            totalOptionsPrice += optionPrice;
+            
+            // Build OptionSelected struct
+            optionsSelected[i] = OptionSelected({
+                optionName: currentOption.optionName,
+                selectedFeatureNames: featureNames
+            });
+        }
+        
+        // Validate all compulsory options selected
+        require(selectedCompulsoryCount == compulsoryCount, "Missing compulsory options");
+        
+        return (totalOptionsPrice, optionsSelected);
     }
-    
-    return (totalPrice, names);
-}
-// // Helper function: Check duplicate option
-// function _checkDuplicateOption(
-//     SelectedOption[] memory selectedOptions,
-//     uint currentIndex
-// ) private pure {
-//     bytes32 currentOptionId = selectedOptions[currentIndex].optionId;
-//     for (uint i = 0; i < currentIndex; i++) {
-//         require(
-//             selectedOptions[i].optionId != currentOptionId,
-//             "Duplicate option selected"
-//         );
-//     }
-// }
 
-// // Helper function: Find option in dish
-// function _findOption(
-//     DishOption[] storage allOptions,
-//     bytes32 optionId
-// ) private view returns (DishOption storage) {
-//     for (uint i = 0; i < allOptions.length; i++) {
-//         if (allOptions[i].optionId == optionId) {
-//             require(allOptions[i].features.length > 0, "Option has no features");
-//             return allOptions[i];
-//         }
-//     }
-//     revert("Option not found in dish");
-// }
+    // Helper function: Check duplicate option
+    function _checkDuplicateOption(
+        SelectedOption[] memory selectedOptions,
+        uint currentIndex
+    ) private pure {
+        bytes32 currentOptionId = selectedOptions[currentIndex].optionId;
+        for (uint i = 0; i < currentIndex; i++) {
+            require(
+                selectedOptions[i].optionId != currentOptionId,
+                "Duplicate option selected"
+            );
+        }
+    }
 
-// // Helper function: Validate option selection
-// function _validateOptionSelection(
-//     DishOption storage option,
-//     bytes32[] memory featureIds
-// ) private view {
-//     uint featureCount = featureIds.length;
-    
-//     // Check compulsory has at least 1 feature
-//     if (option.isCompulsory) {
-//         require(featureCount >= 1, "Compulsory option needs at least 1 feature");
-//     }
-    
-//     // Check maximum selection
-//     require(
-//         featureCount <= option.maximumSelection,
-//         string(abi.encodePacked(
-//             "Exceeded maximum selection for option: ",
-//             option.optionName
-//         ))
-//     );
-    
-//     // Check duplicate features
-//     for (uint i = 0; i < featureCount; i++) {
-//         for (uint j = 0; j < i; j++) {
-//             require(
-//                 featureIds[i] != featureIds[j],
-//                 "Duplicate feature in same option"
-//             );
-//         }
-//     }
-// }
+    // Helper function: Find option in dish
+    function _findOption(
+        DishOption[] storage allOptions,
+        bytes32 optionId
+    ) private view returns (DishOption storage) {
+        for (uint i = 0; i < allOptions.length; i++) {
+            if (allOptions[i].optionId == optionId) {
+                require(allOptions[i].features.length > 0, "Option has no features");
+                return allOptions[i];
+            }
+        }
+        revert("Option not found in dish");
+    }
 
-// // Helper function: Calculate price and get feature names
-// function _calculateOptionPrice(
-//     DishOption storage option,
-//     bytes32[] memory featureIds
-// ) private view returns (uint totalPrice, string[] memory names) {
-//     names = new string[](featureIds.length);
-    
-//     for (uint i = 0; i < featureIds.length; i++) {
-//         bool found = false;
+    // Helper function: Validate option selection
+    function _validateOptionSelection(
+        DishOption storage option,
+        bytes32[] memory featureIds
+    ) private view {
+        uint featureCount = featureIds.length;
         
-//         for (uint j = 0; j < option.features.length; j++) {
-//             if (option.features[j].featureId == featureIds[i]) {
-//                 totalPrice += option.features[j].featurePrice;
-//                 names[i] = option.features[j].featureName;
-//                 found = true;
-//                 break;
-//             }
-//         }
+        // Check compulsory has at least 1 feature
+        if (option.isCompulsory) {
+            require(featureCount >= 1, "Compulsory option needs at least 1 feature");
+        }
         
-//         require(found, string(abi.encodePacked(
-//             "Invalid feature ID in option: ",
-//             option.optionName
-//         )));
-//     }
-    
-//     return (totalPrice, names);
-// }
+        // Check maximum selection
+        require(
+            featureCount <= option.maximumSelection,
+            string(abi.encodePacked(
+                "Exceeded maximum selection for option: ",
+                option.optionName
+            ))
+        );
+        
+        // Check duplicate features
+        for (uint i = 0; i < featureCount; i++) {
+            for (uint j = 0; j < i; j++) {
+                require(
+                    featureIds[i] != featureIds[j],
+                    "Duplicate feature in same option"
+                );
+            }
+        }
+    }
+
+    // Helper function: Calculate price and get feature names
+    function _calculateOptionPrice(
+        DishOption storage option,
+        bytes32[] memory featureIds
+    ) private view returns (uint totalPrice, string[] memory names) {
+        names = new string[](featureIds.length);
+        
+        for (uint i = 0; i < featureIds.length; i++) {
+            bool found = false;
+            
+            for (uint j = 0; j < option.features.length; j++) {
+                if (option.features[j].featureId == featureIds[i]) {
+                    totalPrice += option.features[j].featurePrice;
+                    names[i] = option.features[j].featureName;
+                    found = true;
+                    break;
+                }
+            }
+            
+            require(found, string(abi.encodePacked(
+                "Invalid feature ID in option: ",
+                option.optionName
+            )));
+        }
+        
+        return (totalPrice, names);
+    }
+
 }

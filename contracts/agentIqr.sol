@@ -9,6 +9,7 @@ import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 contract AgentIQR is OwnableUpgradeable {
     
     address public agent;
+    uint public branchId;
     uint256 public totalOrders;
     uint256 public totalRevenue;
     uint256 public completedOrders;
@@ -17,10 +18,11 @@ contract AgentIQR is OwnableUpgradeable {
     bytes32[] public orderIds;
     address public ORDER;
     address public MANAGEMENT;
-    mapping(address => IQRContracts) public mAgentToIQR;
+    mapping(address =>mapping(uint => IQRContracts)) public mAgentToIQR;
     address public enhancedAgent;
     address public iqrFactory;
     address public revenueManager;
+    // address public branchManagement; //proxy
     event OrderCreated(uint256 indexed orderId, address indexed customer, uint256 amount, uint256 timestamp);
     event OrderCompleted(uint256 indexed orderId, uint256 timestamp);
     event OrderCancelled(uint256 indexed orderId, uint256 timestamp);
@@ -34,17 +36,19 @@ contract AgentIQR is OwnableUpgradeable {
         address _REPORTIMP,
         address _TIMEKEEPINGIMP,
         address _revenueManager,
-        address _StaffAgentStore
-        // address _POINTSIMP
+        address _StaffAgentStore,
+        // address _POINTSIMP,
+        uint _branchId
     ) {
         require(_agent != address(0), "Invalid agent address");
         agent = _agent;
         _transferOwnership(_agent);
         enhancedAgent = _enhancedAgent;
         revenueManager = _revenueManager;
-        initializeIQRSCS(_agent,_MANAGEMENTIMP,_ORDERIMP,_REPORTIMP,_TIMEKEEPINGIMP,_StaffAgentStore);
+        initializeIQRSCS(_agent,_MANAGEMENTIMP,_ORDERIMP,_REPORTIMP,_TIMEKEEPINGIMP,_StaffAgentStore,_branchId);
         // ORDER = _ORDER;
         iqrFactory = msg.sender;
+        branchId = _branchId;
         
     }
     modifier onlyIQRFactory {
@@ -67,7 +71,8 @@ contract AgentIQR is OwnableUpgradeable {
         address ORDER_IMP,
         address REPORT_IMP,
         address TIMEKEEPING_IMP,
-        address _StaffAgentStore
+        address _StaffAgentStore,
+        uint _branchId
         ) internal {
         ERC1967Proxy MANAGEMENT_PROXY = new ERC1967Proxy(
             address(MANAGEMENT_IMP),
@@ -95,14 +100,14 @@ contract AgentIQR is OwnableUpgradeable {
             StaffAgentStore: _StaffAgentStore,
             Points: address(0)
         });
-        mAgentToIQR[_agent] = iqr;
+        mAgentToIQR[_agent][_branchId] = iqr;
         ORDER = address(ORDER_PROXY);
         MANAGEMENT = address(MANAGEMENT_PROXY);
         // set(_agent,cloneManagement,cloneOrder,cloneReport,cloneTimekeeping,cardVisa,noti);
 
     }
-    function getIQRSCByAgent(address _agent) external view returns(IQRContracts memory){
-        return mAgentToIQR[_agent];
+    function getIQRSCByAgent(address _agent,uint _branchId) external view returns(IQRContracts memory){
+        return mAgentToIQR[_agent][_branchId];
     }
     //tách ra gọi để FE không bị out of gas
     function set(
@@ -113,35 +118,28 @@ contract AgentIQR is OwnableUpgradeable {
         address _TIMEKEEPING,
         address cardVisa,
         address noti,
-        address _StaffAgentStore
+        address _StaffAgentStore,
+        address _branchManagement //proxy
     )external onlyIQRFactory{
         bytes32 ROLE_ADMIN = keccak256("ROLE_ADMIN");
-        // console.log("caller:",msg.sender);
         IORDER(_ORDER).setIQRAgent(address(this),agent,revenueManager);
         IORDER(_ORDER).setConfig(_MANAGEMENT,_agent,cardVisa,10,noti,_REPORT);
         IMANAGEMENT(_MANAGEMENT).setRestaurantOrder(_ORDER);
         IMANAGEMENT(_MANAGEMENT).setReport(_REPORT);
         IMANAGEMENT(_MANAGEMENT).setTimeKeeping(_TIMEKEEPING);
         IMANAGEMENT(_MANAGEMENT).setStaffAgentStore(_StaffAgentStore);
-        IMANAGEMENT(_MANAGEMENT).setAgentAdd(_agent);
+        IMANAGEMENT(_MANAGEMENT).setAgentAdd(_agent,branchId);
         IMANAGEMENT(_MANAGEMENT).grantRole(ROLE_ADMIN,_agent);
         IStaffAgentStore(_StaffAgentStore).setManagement(_MANAGEMENT);
         IMANAGEMENT(_MANAGEMENT).setAgentIqrSC(address(this));
-        // IMANAGEMENT(_MANAGEMENT).transferOwnership(_agent);
-        // IORDER(_ORDER).transferOwnership(_agent);
-        // IREPORT(_REPORT).transferOwnership(_agent);
-        // ITIMEKEEPING(_TIMEKEEPING).transferOwnership(_agent);
-
+        IMANAGEMENT(_MANAGEMENT).setBranchManagement(_branchManagement);
     }
-    function setPointSC(address _POINTS_PROXY, address _agent) external onlyIQRFactory{
-        IQRContracts storage iqr = mAgentToIQR[_agent];
+    function setPointSC(address _POINTS_PROXY, address _agent, uint branchId) external onlyIQRFactory{
+        IQRContracts storage iqr = mAgentToIQR[_agent][branchId];
         iqr.Points = _POINTS_PROXY;
         require(iqr.Management != address(0) && iqr.Order != address(0),"iqr not set yet");
-        mAgentToIQR[msg.sender].Points = _POINTS_PROXY;
+        mAgentToIQR[msg.sender][branchId].Points = _POINTS_PROXY;
         IMANAGEMENT(iqr.Management).setPoints(_POINTS_PROXY);
-        
-        // IPoint(_POINTS_PROXY).setManagementSC(iqr.Management);
-        // IPoint(_POINTS_PROXY).setOrder(iqr.Order);
         IORDER(iqr.Order).setPointSC(_POINTS_PROXY);
     }
     function transferOwnerIQR(
@@ -150,7 +148,6 @@ contract AgentIQR is OwnableUpgradeable {
         address _ORDER,
         address _REPORT,
         address _TIMEKEEPING
-
     )external onlyIQRFactory{
         IMANAGEMENT(_MANAGEMENT).transferOwnership(_agent);
         IORDER(_ORDER).transferOwnership(_agent);

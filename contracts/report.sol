@@ -27,7 +27,6 @@ contract RestaurantReporting is
         // Split reporting data into separate mappings to avoid stack depth
     // Daily report basic data
     mapping(uint => uint) public dailyNewCustomers;
-    mapping(uint => uint) public dailyReturningCustomers;
     mapping(uint => uint) public dailyFemaleCustomers;
     mapping(uint => uint) public dailyDineInOrders;
     mapping(uint => uint) public dailyTakeAwayOrders;
@@ -52,7 +51,6 @@ contract RestaurantReporting is
     
     // Monthly data (similar structure)
     mapping(uint => uint) public monthlyNewCustomers;
-    mapping(uint => uint) public monthlyReturningCustomers;
     mapping(uint => uint) public monthlyFemaleCustomers;
     mapping(uint => uint) public monthlyDineInOrders;
     mapping(uint => uint) public monthlyTakeAwayOrders;
@@ -92,7 +90,12 @@ contract RestaurantReporting is
     mapping(string =>uint[]) public orderCreatedTimes; //discode to order createdTimes
      mapping(string=> bool) public orderCreatedTimesSet;
     // RankReport[] public rankReport;
-    uint256[48] private __gap;
+    mapping(uint => uint) public dailyReturningCustomersOneTime;
+    mapping(uint => uint) public dailyReturningCustomersFromTwoTimes;
+    mapping(uint => uint) public monthlyReturningCustomersOneTime;
+    mapping(uint => uint) public monthlyReturningCustomersFromTwoTimes;
+
+    uint256[44] private __gap;
 
     constructor() {
         _disableInitializers();
@@ -286,16 +289,19 @@ contract RestaurantReporting is
     //luong Order goi de demo
     function UpdateNewCustomerData( 
         uint date,
-        bool newCustomer
+        uint numberOfVisit
     ) external{
         uint month = _getMonth(date * 86400);
         
-        if(newCustomer) {
+        if(numberOfVisit == 1) {
             dailyNewCustomers[date] += 1;
             monthlyNewCustomers[month] += 1;
+        }else if(numberOfVisit == 2){
+            dailyReturningCustomersOneTime[date] += 1;
+            monthlyReturningCustomersOneTime[month] +=1;
         }else{
-            dailyReturningCustomers[date] += 1;
-            monthlyReturningCustomers[month] +=1;
+            dailyReturningCustomersFromTwoTimes[date] += 1;
+            monthlyReturningCustomersFromTwoTimes[month] +=1;
         }
     }
         // Batch update functions to avoid multiple transactions
@@ -307,6 +313,7 @@ contract RestaurantReporting is
         uint takeAwayOrders,
         uint dineInRevenue,
         uint takeAwayRevenue
+
     ) external {
         dailyNewCustomers[date] += newCustomers;
         dailyFemaleCustomers[date] += femaleCustomers;
@@ -314,7 +321,6 @@ contract RestaurantReporting is
         dailyTakeAwayOrders[date] += takeAwayOrders;
         dailyDineInRevenue[date] += dineInRevenue;
         dailyTakeAwayRevenue[date] += takeAwayRevenue;
-        
         // Update monthly data
         uint month = _getMonth(date * 86400);
         monthlyNewCustomers[month] += newCustomers;
@@ -369,7 +375,6 @@ contract RestaurantReporting is
     {
         DailyReport memory current = GetDailyReport(currentDate);
         DailyReport memory previous = GetDailyReport(previousDate);
-        
         return _calculateBasicComparison(current, previous);
     }
     // vd tháng 1 trùyen la 1, năm 2025 truyen la 2025
@@ -396,7 +401,6 @@ contract RestaurantReporting is
                 comparison.customerGrowthPositive = false;
             }
         }
-        
         // Revenue growth
         if (previous.totalRevenue > 0) {
             if (current.totalRevenue >= previous.totalRevenue) {
@@ -548,7 +552,7 @@ contract RestaurantReporting is
         uint previousPeriod
     ) external view returns (DishComparison memory comparison) {
         DishDailyReport memory current = GetDishDailyReport(dishCode, currentPeriod);
-        DishDailyReport memory previous = GetDishDailyReport(dishCode, previousPeriod);
+        // DishDailyReport memory previous = GetDishDailyReport(dishCode, previousPeriod);
         
         comparison.currentRanking = dishRankingHistory[dishCode][currentPeriod];
         comparison.previousRanking = dishRankingHistory[dishCode][previousPeriod];
@@ -893,7 +897,8 @@ contract RestaurantReporting is
         // Customer segments
         report.newCustomers = dailyNewCustomers[date];
         report.femaleCustomers = dailyFemaleCustomers[date];
-        
+        report.returningCustomersOneTime = dailyReturningCustomersOneTime[date];
+        report.returningCustomersFromTwoTimes = dailyReturningCustomersFromTwoTimes[date];
         // Order types
         report.dineInOrders = dailyDineInOrders[date];
         report.takeAwayOrders = dailyTakeAwayOrders[date];
@@ -937,6 +942,8 @@ contract RestaurantReporting is
         report.coupleCustomers = monthlyCoupleCustomers[monthKey];
         report.tripleCustomers = monthlyTripleCustomers[monthKey];
         report.groupCustomers = monthlyGroupCustomers[monthKey];
+        report.returningCustomersOneTime = monthlyReturningCustomersOneTime[monthKey];
+        report.returningCustomersFromTwoTimes = monthlyReturningCustomersFromTwoTimes[monthKey];
         
         for(uint8 i = 0; i < 10; i++) {
             report.ageGroups[i] = monthlyAgeGroups[monthKey][i];

@@ -96,9 +96,9 @@ interface IManagement {
         uint amountUsed, 
         uint amountMax, 
         uint from, 
-        uint to
-        // DiscountType discountType,
-        // bytes32[] memory targetGroupIds
+        uint to,
+        DiscountType discountType,
+        bytes32[] memory targetGroupIds
     );   
     function UpdateDiscountCodeUsed(string memory code) external;
     function getWorkingShifts() external view returns(WorkingShift[] memory);
@@ -124,11 +124,12 @@ interface IManagement {
     function hasRole(bytes32 role, address account) external view returns (bool);
     function setStaffAgentStore(address _staffAgentSC)external ;
     function grantRole(bytes32 role, address account) external;
-function CalculateAndValidateOptions(
-    string memory dishCode,
-    SelectedOption[] memory selectedOptions
-) external view returns (uint totalOptionsPrice, OptionSelected[] memory optionsSelected) ;
+    function CalculateAndValidateOptions(
+        string memory dishCode,
+        SelectedOption[] memory selectedOptions
+    ) external view returns (uint totalOptionsPrice, OptionSelected[] memory optionsSelected) ;
     function getDishOrderIndex(string memory dishCode) external view returns (uint) ;
+    function GetActiveStaffAddressesByDate(uint date) external view returns (address[] memory);
 }
 interface ICardTokenManager {
     function getPoolInfo(string memory _transactionID) external view returns(PoolInfo memory);

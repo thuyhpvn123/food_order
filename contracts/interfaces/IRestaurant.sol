@@ -1,5 +1,19 @@
 // SPDX-License-Identifier: SEE LICENSE IN LICENSE
 pragma solidity ^0.8.20;
+enum CurrencyDisplay{ BEFORE, AFTER}
+enum Currency {
+    SAR, BDT, MMK, CNY, CZK, EUR, USD,INR, ILS, HUF, IDR, JPY, KRW, MYR, IRR, PLN, RON, RUB, KES, SEK, THB, TRY, UAH, PKR, VND, PHP
+}
+enum PaymentOrder {
+    PAY_ADVANCE,
+    PAY_AFTER
+}
+enum PaymentMethod {
+    CASH,
+    VISA,
+    QR,
+    POINTS
+}
 enum BannerPosition {
     HOME,
     PAYMENT_PAGE
@@ -64,8 +78,50 @@ enum TCStatus {
 enum ORDER_STATUS {
     UNCONFIRMED,
     CONFIRMED,
-    FINISHED
+    FINISHED,
+    CANCELED
 }
+enum HistoryAction {
+    ORDER_CREATED,
+    ORDER_ACKNOWLEDGED,
+    ORDER_CONFIRMED,
+    ORDER_FINISHED,
+    TRANSFER_REQUESTED,
+    TRANSFER_ACCEPTED,
+    TRANSFER_DECLINED,
+    ORDER_CANCELLED,
+    COURSE_STATUS_UPDATED,
+    PAYMENT_COMPLETED
+}
+
+enum TransferStatus {
+    NONE,
+    PENDING,
+    ACCEPTED,
+    DECLINED,
+    CANCELLED
+}
+
+struct TransferRequest {
+    uint256 requestId;
+    bytes32 orderId;
+    address fromStaff;
+    address toStaff;
+    uint256 timestamp;
+    TransferStatus status;
+    string reason;
+}
+
+struct OrderHistory {
+    uint256 id;
+    bytes32 orderId;
+    uint256 timestamp;
+    HistoryAction action;
+    address actor;
+    string details;
+    address targetStaff; // Dùng cho transfer
+}
+
 struct Area {
     uint id;
     string name;
@@ -145,6 +201,7 @@ struct Table {
     bytes32 paymentId;
     bool active;
     string name;
+    Area area;
 }
 
 struct Course {
@@ -192,6 +249,7 @@ struct Discount {
     bytes32[] targetGroupIds;        // Danh sách group IDs (cho AUTO_GROUP)
     uint pointCost;                  // Điểm cần để redeem voucher
     bool isRedeemable;               // Có thể đổi bằng điểm không 
+    string textDes;
 }
 
 struct Payment {
@@ -319,6 +377,9 @@ struct DailyReport {
     uint[10] ageGroups; // age groups by decade
     uint[5] serviceRatings; // 1-5 star ratings count
     uint[5] foodRatings; // 1-5 star ratings count
+    uint returningCustomersOneTime;
+    uint returningCustomersFromTwoTimes;
+
 }
 
 struct MonthlyReport {
@@ -345,6 +406,8 @@ struct MonthlyReport {
     uint[10] ageGroups;
     uint[5] serviceRatings;
     uint[5] foodRatings;
+    uint returningCustomersOneTime;
+    uint returningCustomersFromTwoTimes;
 }
 
 struct DishReport {
@@ -537,4 +600,113 @@ struct OptionSelected {
     string[] selectedFeatureNames;
 } 
 
+    // ==================== STRUCTS BranchManager ====================
+    
+    struct Branch {
+        uint256 branchId;
+        string name;
+        bool active;
+        bool isMain;
+    }
+    
+    struct ManagerInfo {
+        address wallet;
+        string name;
+        string phone;
+        string image;
+        bool isCoOwner;              // true = Co-Owner, false = Branch Manager
+        // DecisionType decisionType;
+        uint256[] branchIds;         // Danh sách chi nhánh được quản lý
+        bool hasFullAccess;          // true = Toàn bộ chi nhánh, false = Chi nhánh được chọn
+        bool canViewData;
+        bool canEditData;
+        bool canProposeAndVote;
+        uint256 createdAt;
+        bool active;
+    }
+    
+    struct Proposal {
+        uint256 proposalId;
+        address proposer;
+        ProposalType proposalType;
+        uint256 branchId;            // 0 nếu là proposal chung cho merchant
+        bytes oldData;                  // Encoded data cho thay đổi
+        bytes newData;
+        ProposalStatus status;
+        uint256 votesFor;
+        uint256 votesAgainst;
+        uint256 totalVoters;         // Tổng số người có quyền vote
+        uint256 createdAt;
+        uint256 executedAt;
+    }
+    struct PaginatedProposals {
+        Proposal[] proposals;
+        uint256 total;
+        uint256 page;
+        uint256 pageSize;
+        uint256 totalPages;
+    }
+    struct Notification {
+        uint256 notificationId;
+        uint256 branchId;            // Chi nhánh liên quan
+        address recipient;
+        string title;
+        string message;
+        uint256 proposalId;          // ID proposal liên quan (nếu có)
+        bool isRead;
+        uint256 createdAt;
+    }
+    struct PaymentInfo {
+        string bankAccount;
+        string nameAccount;
+        string nameOfBank;
+        string taxCode;
+        string wallet;
+    }
 
+    
+    enum ProposalStatus {
+        PENDING,
+        APPROVED,
+        REJECTED,
+        EXECUTED, 
+        EXPIRED
+    }
+    
+    enum ProposalType {
+        MERCHANT_INFO_CHANGE,     // Thay đổi thông tin merchant
+        BRANCH_INFO_CHANGE,       // Thay đổi thông tin chi nhánh
+        ADD_MANAGER,              // Thêm quản lý
+        REMOVE_MANAGER,           // Xóa quản lý
+        EDIT_STAFF,
+        EDIT_BANKACCOUNT
+    }
+
+    struct ManagerProposalDashboard {
+        Proposal[] votedProposals;      // Proposals đã vote
+        Proposal[] unvotedProposals;    // Proposals chưa vote
+        Proposal[] allProposals;        // Tất cả proposals
+        uint256 totalVoted;             // Tổng số đã vote
+        uint256 totalUnvoted;           // Tổng số chưa vote
+        uint256 totalAll;               // Tổng số tất cả
+        uint256 page;                   // Trang hiện tại
+        uint256 pageSize;               // Kích thước trang
+        uint256 totalPagesVoted;        // Tổng số trang (voted)
+        uint256 totalPagesUnvoted;      // Tổng số trang (unvoted)
+        uint256 totalPagesAll;          // Tổng số trang (all)
+    }
+    struct ManagerProposalByBranchDashboard {
+        uint256 branchId;               // ID chi nhánh
+        string branchName;              // Tên chi nhánh
+        Proposal[] votedProposals;      // Proposals đã vote
+        Proposal[] unvotedProposals;    // Proposals chưa vote
+        Proposal[] allProposals;        // Tất cả proposals
+        uint256 totalVoted;             // Tổng số đã vote
+        uint256 totalUnvoted;           // Tổng số chưa vote
+        uint256 totalAll;               // Tổng số tất cả
+        uint256 page;                   // Trang hiện tại
+        uint256 pageSize;               // Kích thước trang
+        uint256 totalPagesVoted;        // Tổng số trang (voted)
+        uint256 totalPagesUnvoted;      // Tổng số trang (unvoted)
+        uint256 totalPagesAll;          // Tổng số trang (all)
+    }

@@ -29,13 +29,31 @@ struct Agent {
     string phone;
     string note;
     bool[3] permissions; // [IQR, Loyalty, MeOS]
-    string[] subLocations;
-    string[] subPhones;
+    // string[] subLocations;
+    // string[] subPhones;
     uint256 createdAt;
     uint256 updatedAt;
     bool isActive;
     bool exists;
     string domain;
+    BranchInfo[] branches;
+}
+struct BranchInfoInput {
+    string name;
+    string location;
+    string phone;
+    string domain;
+}
+
+struct BranchInfo {
+    uint branchId;
+    string name;
+    string location;
+    string phone;
+    string domain;
+    bool isActive;
+    bool isMain;
+    uint createdAt;
 }
 
 struct MeOSLicense {
@@ -138,17 +156,19 @@ struct License {
 
 interface IIQRFactory {
     function createAgentIQR(address _agent) external returns (address);
-    function getAgentIQRContract(address _agent) external view returns (address);    
-    function setAgentIQR( address _agent)external ;
-    function setPointsIQRFactory(address _agent, address _Points) external;
-    function transferOwnerIQRContracts(address _agent)external;
-    function getIQRSCByAgentFromFactory(address _agent) external view returns (IQRContracts memory);
-
+    function getAgentIQRContract(address _agent, uint _branchId) external view returns (address);   
+    function setAgentIQR( address _agent, uint _branchId, address _branchManagement)external;   
+    function setPointsIQRFactory(address _agent, address _Points, uint _branchId) external;
+    function transferOwnerIQRContracts(address _agent, uint _branchId)external;
+    function getIQRSCByAgent(address _agent,uint _branchId) external view returns(IQRContracts memory);
+    function getIQRSCByAgentFromFactory(address _agent, uint _branchId) external view returns (IQRContracts memory) ;
+    function getBranchManagement(address _agent) external view returns (address);
+    function getManagementSCByAgentsFromFactory(address _agent, uint[] memory _branchIds) external view returns (address[] memory managementScs);
 }
 interface ILoyaltyFactory {
-    function createAgentLoyalty(address _agent) external returns (address);
-    function getAgentLoyaltyContract(address _agent) external view returns (address);
-    function setPointsLoyaltyFactory(address _agent, address _Management,address _Order) external returns(address) ;
+    function createAgentLoyalty(address _agent,uint _branchId) external  returns (address);
+    function getAgentLoyaltyContract(address _agent,uint _branchId) external view returns (address);
+    function setPointsLoyaltyFactory(address _agent, address _Management,address _Order,uint _branchId) external returns(address);
     function transferOwnerPointSC(address _agent, address POINTS_PROXY)external;
 }
 
@@ -170,7 +190,7 @@ interface IAgentIQR {
     function deactivate() external;
     function reactivate() external;
     function isActive() external view returns (bool);
-    function getIQRSCByAgent(address _agent) external view returns(IQRContracts memory);
+    function getIQRSCByAgent(address _agent,uint _branchId) external view returns(IQRContracts memory);
     function transferOwnerIQR(
         address _agent,
         address _MANAGEMENT,
@@ -215,12 +235,15 @@ interface IMANAGEMENT {
     function setTimeKeeping(address _timeKeeping) external;
     function transferOwnership(address newOwner) external ;
     function setStaffAgentStore(address _staffAgentSC)external;
-    function setAgentAdd(address _agent) external ;
+    function setAgentAdd(address _agent,uint _branchId) external;
     function grantRole(bytes32 role, address account) external;
     function initialize() external;
     function setPoints(address _points) external;
     function setAgentIqrSC(address _agentIQRSC) external;
     function setActive(bool _active) external;
+    function setBranchManagement(address _branchManagement) external;
+    function setRoleForCoOwner(address _coOwner)external;
+
 }
 interface IREPORT {
     function transferOwnership(address newOwner) external ;
@@ -237,8 +260,37 @@ interface IEnhancedAgent {
 }
 interface IStaffAgentStore {
     function setManagement(address _management) external;
-    function setAgent(address user, address agent) external;
-}
-// interface IPoint {
+    function setAgent(address user, address agent,uint branchId) external;
+    function setBranchManagement(address _branchManger)external;
+    function setAgentForCoOwner(address _coOwner, address agent, uint256[] memory branchIds) external;
 
-// }
+}
+interface IBranchManagement {
+      function createBranch(
+        uint _newBranchId,
+        string memory _name,
+        bool _isMain
+    ) external returns (uint256) ;
+    function initialize(address _agent) external;
+    function updateBranch(
+        uint256 branchId,
+        string memory _name
+    ) external ;
+    function deactivateBranch(uint256 branchId) external;
+     function AddAndUpdateManager(
+        address _wallet,
+        string memory _name,
+        string memory _phone,
+        string memory _image,
+        bool _isAllBranches,
+        uint256[] memory _branchIds,
+        bool _hasFullAccess,
+        bool _canViewData,
+        bool _canEditData,
+        bool _canProposeAndVote
+    ) external;
+    function setMainOwner(address _agent) external;
+    function setStaffAgentStore(address _staffAgentSC)external;
+    function setIqrFactorySC(address _iqrFactorySc) external ;
+}
+

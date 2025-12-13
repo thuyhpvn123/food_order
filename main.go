@@ -23,6 +23,10 @@ solc --bin --abi contracts/ManagementDemo.sol -o output_ManagementDemo/   --base
 solc --bin --abi contracts/order_demo_option.sol -o output_order_demo_option/   --base-path .   --include-path node_modules --via-ir --overwrite
 solc --bin --abi contracts/timekeeping.sol -o output_timekeeping/   --base-path .   --include-path node_modules --via-ir --overwrite
 solc --bin --abi contracts/report.sol -o output_report/   --base-path .   --include-path node_modules --via-ir --overwrite
+solc --bin --abi contracts/order_v2.sol -o output_order_v2/   --base-path .   --include-path node_modules --via-ir --overwrite
+solc --bin --abi contracts/branchManager1.sol -o output_branchManager1/   --base-path .   --include-path node_modules --via-ir --overwrite
+solc --bin --abi contracts/order_new.sol -o output_order_new/   --base-path .   --include-path node_modules --via-ir --overwrite
+solc --bin --abi contracts/staffMatch.sol -o output_staffMatch/   --base-path .   --include-path node_modules --via-ir --overwrite
 
 ***/
 func main() {

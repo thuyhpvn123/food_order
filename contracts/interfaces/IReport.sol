@@ -12,9 +12,9 @@ interface IRestaurantReporting {
         uint revenue,
         uint orders
      ) external ;
-      function UpdateNewCustomerData( 
+    function UpdateNewCustomerData( 
         uint date,
-        bool newCustomer
+        uint numberOfVisit
     ) external;
     function UpdateDailyStatsCustomer(uint date, uint customers) external ;
 }

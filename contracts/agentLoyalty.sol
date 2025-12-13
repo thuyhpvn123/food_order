@@ -70,8 +70,7 @@ contract RestaurantLoyaltySystem is
     mapping(address => Member) public members;
     mapping(string => address) public memberIdToAddress;
     mapping(address => uint256[]) public memberTransactions;
-    mapping(address => bytes32) public memberToGroup;
-    
+    mapping(address => bytes32[]) public memberToGroups; // Member có thể thuộc nhiều groups    
     // System mappings
     mapping(uint256 => Transaction) public transactions;
     mapping(uint256 => Event) public events;
@@ -113,7 +112,7 @@ contract RestaurantLoyaltySystem is
         string metadata;
     }
 
-    
+    Event[] public allEvents;
     // // ============ ENUMS ============
     
     
@@ -419,27 +418,36 @@ contract RestaurantLoyaltySystem is
 
         return (result,length);
     }
-    function DeleteMember(address _member) external onlyAdmin {
-        require(members[_member].walletAddress != address(0), "Member not found");
-        
-        Member storage member = members[_member];
-        string memory memberId = member.memberId;
-        
-        // Xóa mapping
-        delete memberIdToAddress[memberId];
-        delete members[_member];
-        
-        // Xóa khỏi allMembers array
-        for (uint256 i = 0; i < allMembers.length; i++) {
-            if (allMembers[i].walletAddress == _member) {
-                // Di chuyển phần tử cuối lên vị trí hiện tại
-                allMembers[i] = allMembers[allMembers.length - 1];
-                allMembers.pop();
-                break;
-        }
+/**
+ * @dev Xóa member (đã fix)
+ */
+function DeleteMember(address _member) external onlyAdmin {
+    require(members[_member].walletAddress != address(0), "Member not found");
+    
+    Member storage member = members[_member];
+    string memory memberId = member.memberId;
+    
+    // Gỡ member khỏi tất cả groups
+    bytes32[] memory groups = memberToGroups[_member];
+    for (uint256 i = 0; i < groups.length; i++) {
+        _removeMemberFromGroupArray(groups[i], _member);
+    }
+    delete memberToGroups[_member];
+    
+    // Xóa mapping
+    delete memberIdToAddress[memberId];
+    delete members[_member];
+    
+    // Xóa khỏi allMembers array
+    for (uint256 i = 0; i < allMembers.length; i++) {
+        if (allMembers[i].walletAddress == _member) {
+            allMembers[i] = allMembers[allMembers.length - 1];
+            allMembers.pop();
+            break;
         }
     }
-    function _isValidAmount(bytes32 _paymentId,uint _amount)internal view returns(bool){
+}    
+function _isValidAmount(bytes32 _paymentId,uint _amount)internal view returns(bool){
         require(Order != address(0),"Order address not set yet");
         return IOrder(Order).isValidAmount(_paymentId,_amount);
     } 
@@ -618,6 +626,25 @@ contract RestaurantLoyaltySystem is
         );
         
         emit PointsIssued(_amount, msg.sender, block.timestamp);
+    }
+    function getPointsInfo() 
+        external view returns
+    (
+        string memory namePoint,
+        bool isUnlimitedIssuePoint,
+        uint accumulationPercentPoint,
+        uint maxPercentPerInvoicePoint,
+        uint exchangeRatePoint,
+        bool isApplyWithOtherDiscountPoint
+    ){
+        return(
+            name,
+            isUnlimitedIssue,
+            accumulationPercent,
+            maxPercentPerInvoice,
+            exchangeRate,
+            isApplyWithOtherDiscount
+        );
     }
      /**
      * @dev Update cấu hình hệ thống điểm (không mint thêm token)
@@ -1230,98 +1257,254 @@ contract RestaurantLoyaltySystem is
     
     // ============ TIER MANAGEMENT ============
     
-    function createTierConfig(
-        string memory _nameTier,
-        uint256 _pointsRequired,
-        uint256 _multiplier,
-        uint256 _pointsMax,
-        string memory _colour
-    ) external onlyAdmin {
-        if (_pointsMax == 0) {
-            _pointsMax = type(uint256).max;
-        }
-        require(_pointsRequired < _pointsMax, "pointsRequired must be less than pointsMax");
-        
-        bytes32 tierID = keccak256(abi.encodePacked(_nameTier, block.timestamp));
-        require(mNameToTierConfig[_nameTier].id == bytes32(0), "_nameTier duplicate");
-        
-        // Check for overlapping ranges
-        for (uint256 i = 0; i < allTiers.length; i++) {
-            TierConfig memory existingTier = allTiers[i];
-            bool isOverlapping = !(
-                _pointsMax <= existingTier.pointsRequired || 
-                _pointsRequired >= existingTier.pointsMax
-            );
-            require(!isOverlapping, "Point range overlaps with existing tier");
-        }
-        
-        TierConfig memory newTier = TierConfig({
-            id: tierID,
-            nameTier: _nameTier,
-            pointsRequired: _pointsRequired,
-            pointsMax: _pointsMax,
-            multiplier: _multiplier,
-            colour: _colour
-        });
-        
-        tierConfigs[tierID] = newTier;
-        allTiers.push(newTier);
-        mNameToTierConfig[_nameTier] = newTier;
-        
-        // Sort tiers by pointsRequired
-        _sortTiers();
+function createTierConfig(
+    string memory _nameTier,
+    uint256 _pointsRequired,
+    uint256 _multiplier,
+    string memory _colour
+) external onlyAdmin {
+    require(_pointsRequired >= 0, "Points required must be >= 0");
+    require(_multiplier > 0, "Multiplier must be > 0");
+    require(bytes(_nameTier).length > 0, "Tier name required");
+    
+    bytes32 tierID = keccak256(abi.encodePacked(_nameTier, block.timestamp));
+    require(mNameToTierConfig[_nameTier].id == bytes32(0), "_nameTier duplicate");
+    
+    // Kiểm tra trùng pointsRequired với tier đã tồn tại
+    for (uint256 i = 0; i < allTiers.length; i++) {
+        require(
+            allTiers[i].pointsRequired != _pointsRequired, 
+            "Points required already exists in another tier"
+        );
     }
     
-    function updateTierConfig(
-        bytes32 _tierID,
-        string memory _nameTier,
-        uint256 _pointsRequired,
-        uint256 _multiplier,
-        uint256 _pointsMax,
-        string memory _colour
-    ) external onlyAdmin {
-        require(tierConfigs[_tierID].id != bytes32(0), "Tier not found");
-        
-        if (_pointsMax == 0) {
-            _pointsMax = type(uint256).max;
-        }
-        require(_pointsRequired < _pointsMax, "pointsRequired must be less than pointsMax");
-        
-        // Check overlapping (exclude current tier)
+    // Tạo tier mới với pointsMax tạm thời = max uint256
+    TierConfig memory newTier = TierConfig({
+        id: tierID,
+        nameTier: _nameTier,
+        pointsRequired: _pointsRequired,
+        pointsMax: type(uint256).max,
+        multiplier: _multiplier,
+        colour: _colour
+    });
+    
+    tierConfigs[tierID] = newTier;
+    allTiers.push(newTier);
+    mNameToTierConfig[_nameTier] = newTier;
+    
+    // Sort tiers và tự động cập nhật pointsMax
+    _sortAndUpdateTierRanges();
+}
+
+// ============ UPDATE TIER CONFIG (Fixed) ============
+
+function updateTierConfig(
+    bytes32 _tierID,
+    string memory _nameTier,
+    uint256 _pointsRequired,
+    uint256 _multiplier,
+    string memory _colour
+) external onlyAdmin {
+    require(tierConfigs[_tierID].id != bytes32(0), "Tier not found");
+    require(_pointsRequired >= 0, "Points required must be >= 0");
+    
+    TierConfig storage tier = tierConfigs[_tierID];
+    string memory oldName = tier.nameTier;
+    
+    // Kiểm tra trùng pointsRequired (trừ tier hiện tại)
+    if (_pointsRequired > 0 && _pointsRequired != tier.pointsRequired) {
         for (uint256 i = 0; i < allTiers.length; i++) {
-            TierConfig memory existingTier = allTiers[i];
-            if (existingTier.id == _tierID) continue;
-            
-            bool isOverlapping = !(
-                _pointsMax <= existingTier.pointsRequired || 
-                _pointsRequired >= existingTier.pointsMax
-            );
-            require(!isOverlapping, "Point range overlaps with existing tier");
-        }
-        
-        if (bytes(_nameTier).length > 0) {
-            require(mNameToTierConfig[_nameTier].id == bytes32(0), "_nameTier duplicate");
-            tierConfigs[_tierID].nameTier = _nameTier;
-        }
-        if (bytes(_colour).length > 0) {
-            tierConfigs[_tierID].colour = _colour;
-        }
-        if (_pointsRequired > 0) tierConfigs[_tierID].pointsRequired = _pointsRequired;
-        if (_pointsMax > 0) tierConfigs[_tierID].pointsMax = _pointsMax;
-        if (_multiplier > 0) tierConfigs[_tierID].multiplier = _multiplier;
-        
-        mNameToTierConfig[_nameTier] = tierConfigs[_tierID];
-        
-        // Update in allTiers array
-        for (uint256 i = 0; i < allTiers.length; i++) {
-            if (allTiers[i].id == _tierID) {
-                allTiers[i] = tierConfigs[_tierID];
-                break;
+            if (allTiers[i].id != _tierID) {
+                require(
+                    allTiers[i].pointsRequired != _pointsRequired,
+                    "Points required already exists in another tier"
+                );
             }
         }
-        
-        _sortTiers();
+        tier.pointsRequired = _pointsRequired;
     }
+    
+    // Cập nhật tên tier
+    if (bytes(_nameTier).length > 0 && keccak256(bytes(_nameTier)) != keccak256(bytes(oldName))) {
+        require(mNameToTierConfig[_nameTier].id == bytes32(0), "_nameTier duplicate");
+        delete mNameToTierConfig[oldName];
+        tier.nameTier = _nameTier;
+        mNameToTierConfig[_nameTier] = tier;
+    }
+    
+    // Cập nhật các trường khác
+    if (bytes(_colour).length > 0) {
+        tier.colour = _colour;
+    }
+    if (_multiplier > 0) {
+        tier.multiplier = _multiplier;
+    }
+    
+    // Cập nhật trong allTiers array
+    for (uint256 i = 0; i < allTiers.length; i++) {
+        if (allTiers[i].id == _tierID) {
+            allTiers[i] = tier;
+            break;
+        }
+    }
+    
+    // Sort và cập nhật lại pointsMax
+    _sortAndUpdateTierRanges();
+}
+
+// ============ DELETE TIER CONFIG (Fixed) ============
+
+function deleteTierConfig(bytes32 _tierID) external onlyAdmin {
+    require(tierConfigs[_tierID].id != bytes32(0), "Tier not found");
+    
+    string memory tierName = tierConfigs[_tierID].nameTier;
+    delete tierConfigs[_tierID];
+    delete mNameToTierConfig[tierName];
+    
+    // Remove from allTiers
+    for (uint256 i = 0; i < allTiers.length; i++) {
+        if (allTiers[i].id == _tierID) {
+            allTiers[i] = allTiers[allTiers.length - 1];
+            allTiers.pop();
+            break;
+        }
+    }
+    
+    // Sort và cập nhật lại pointsMax cho các tier còn lại
+    _sortAndUpdateTierRanges();
+}
+
+// ============ HELPER FUNCTIONS (New Logic) ============
+
+/**
+ * @dev Sort tiers theo pointsRequired và tự động cập nhật pointsMax
+ * Logic: pointsMax của tier[i] = pointsRequired của tier[i+1] - 1
+ * Tier cuối cùng có pointsMax = type(uint256).max
+ */
+function _sortAndUpdateTierRanges() internal {
+    if (allTiers.length == 0) return;
+    
+    // 1. Sort tiers theo pointsRequired (ascending)
+    _sortTiers();
+    
+    // 2. Cập nhật pointsMax cho từng tier
+    for (uint256 i = 0; i < allTiers.length; i++) {
+        bytes32 tierId = allTiers[i].id;
+        
+        if (i < allTiers.length - 1) {
+            // Tier không phải cuối cùng: pointsMax = pointsRequired của tier tiếp theo - 1
+            uint256 nextTierPoints = allTiers[i + 1].pointsRequired;
+            
+            // Kiểm tra logic: tier tiếp theo phải có pointsRequired lớn hơn
+            require(
+                nextTierPoints > allTiers[i].pointsRequired,
+                "Invalid tier order: overlapping ranges"
+            );
+            
+            tierConfigs[tierId].pointsMax = nextTierPoints - 1;
+            allTiers[i].pointsMax = nextTierPoints - 1;
+        } else {
+            // Tier cuối cùng: pointsMax = unlimited
+            tierConfigs[tierId].pointsMax = type(uint256).max;
+            allTiers[i].pointsMax = type(uint256).max;
+        }
+        
+        // Cập nhật lại mNameToTierConfig
+        mNameToTierConfig[allTiers[i].nameTier] = allTiers[i];
+    }
+}
+
+/**
+ * @dev Sort tiers theo pointsRequired (Bubble Sort)
+ */
+function _sortTiers() internal {
+    if (allTiers.length <= 1) return;
+    
+    for (uint256 i = 0; i < allTiers.length - 1; i++) {
+        for (uint256 j = 0; j < allTiers.length - i - 1; j++) {
+            if (allTiers[j].pointsRequired > allTiers[j + 1].pointsRequired) {
+                TierConfig memory temp = allTiers[j];
+                allTiers[j] = allTiers[j + 1];
+                allTiers[j + 1] = temp;
+            }
+        }
+    }
+}
+
+/**
+ * @dev Calculate tier dựa trên lifetime points (Logic không thay đổi)
+ */
+function _calculateTier(uint256 _lifetimePoints) internal view returns (bytes32) {
+    bytes32 currentTierID = bytes32(0);
+    
+    for (uint256 i = 0; i < allTiers.length; i++) {
+        TierConfig memory tier = allTiers[i];
+        
+        // Kiểm tra nếu điểm nằm trong range [pointsRequired, pointsMax]
+        if (_lifetimePoints >= tier.pointsRequired && _lifetimePoints <= tier.pointsMax) {
+            return tier.id;
+        }
+    }
+    
+    return currentTierID; // Trả về bytes32(0) nếu không thuộc tier nào
+}
+
+// ============ VIEW FUNCTIONS (Updated) ============
+
+/**
+ * @dev Lấy thông tin tier range
+ */
+function getTierRange(bytes32 _tierID) external view returns (
+    string memory nameTier,
+    uint256 pointsRequired,
+    uint256 pointsMax,
+    uint256 multiplier,
+    string memory colour
+) {
+    TierConfig storage config = tierConfigs[_tierID];
+    require(config.id != bytes32(0), "Tier not found");
+    
+    return (
+        config.nameTier,
+        config.pointsRequired,
+        config.pointsMax,
+        config.multiplier,
+        config.colour
+    );
+}
+
+/**
+ * @dev Lấy tất cả tiers với ranges đã được tính
+ */
+function getAllTiersWithRanges() external view returns (
+    TierConfig[] memory tiers,
+    string[] memory rangeDescriptions
+) {
+    tiers = allTiers;
+    rangeDescriptions = new string[](allTiers.length);
+    
+    for (uint256 i = 0; i < allTiers.length; i++) {
+        if (allTiers[i].pointsMax == type(uint256).max) {
+            rangeDescriptions[i] = string(
+                abi.encodePacked(
+                    Strings.toString(allTiers[i].pointsRequired),
+                    "+ points"
+                )
+            );
+        } else {
+            rangeDescriptions[i] = string(
+                abi.encodePacked(
+                    Strings.toString(allTiers[i].pointsRequired),
+                    " - ",
+                    Strings.toString(allTiers[i].pointsMax),
+                    " points"
+                )
+            );
+        }
+    }
+    
+    return (tiers, rangeDescriptions);
+}
     function setValidityPeriod(uint _validityPeriod) external onlyAdmin {
         validityPeriod = _validityPeriod;
     }
@@ -1347,39 +1530,128 @@ contract RestaurantLoyaltySystem is
     function getTierConfigFromName(string memory _nameTier) external view returns(TierConfig memory){
         return mNameToTierConfig[_nameTier];
     }
-
-    function deleteTierConfig(bytes32 _tierID) external onlyAdmin {
-        require(tierConfigs[_tierID].id != bytes32(0), "Tier not found");
-        
-        string memory tierName = tierConfigs[_tierID].nameTier;
-        delete tierConfigs[_tierID];
-        delete mNameToTierConfig[tierName];
-        
-        // Remove from allTiers
-        for (uint256 i = 0; i < allTiers.length; i++) {
-            if (allTiers[i].id == _tierID) {
-                allTiers[i] = allTiers[allTiers.length - 1];
-                allTiers.pop();
-                break;
-            }
-        }
-        
-        _sortTiers();
+    function getAllTiers() external view returns (TierConfig[] memory) {
+        return allTiers;
     }
-    
-    function _sortTiers() internal {
-        if (allTiers.length <= 1) return;
+    function getAllTiersWithMemberCount() external view returns (
+        TierConfig[] memory tiers,
+        uint256[] memory memberCounts
+    ) {
+        tiers = allTiers;
+        memberCounts = new uint256[](allTiers.length);
         
-        for (uint256 i = 0; i < allTiers.length - 1; i++) {
-            for (uint256 j = 0; j < allTiers.length - i - 1; j++) {
-                if (allTiers[j].pointsRequired > allTiers[j + 1].pointsRequired) {
-                    TierConfig memory temp = allTiers[j];
-                    allTiers[j] = allTiers[j + 1];
-                    allTiers[j + 1] = temp;
+        // Đếm members cho từng tier
+        for (uint256 i = 0; i < allTiers.length; i++) {
+            uint256 count = 0;
+            bytes32 tierID = allTiers[i].id;
+            
+            for (uint256 j = 0; j < allMembers.length; j++) {
+                if (allMembers[j].isActive && allMembers[j].tierID == tierID) {
+                    count++;
                 }
             }
+            
+            memberCounts[i] = count;
         }
+        
+        return (tiers, memberCounts);
     }
+
+    function GetAllTierDatas() external view returns (TierData[] memory tierDatas){
+       tierDatas = _getAllTierDatas();
+    }
+        // Thêm hàm lấy thống kê tất cả tier:
+    function _getAllTierDatas() internal view returns (
+        TierData[] memory tierDatas
+    ) {
+        TierConfig[] memory tiers = allTiers;       
+        tierDatas = new TierData[](tiers.length);
+
+        
+        // Đếm members cho từng tier
+        for (uint256 i = 0; i < allTiers.length; i++) {
+            uint256 count = 0;
+            bytes32 tierID = allTiers[i].id;
+            
+            for (uint256 j = 0; j < allMembers.length; j++) {
+                if (allMembers[j].isActive && allMembers[j].tierID == tierID) {
+                    count++;
+                }
+            }
+            
+            tierDatas[i].tierConfig = allTiers[i];
+            tierDatas[i].memberCount = count;
+        }
+        
+        return tierDatas;
+    }
+    function getAllTierDatasPagination(uint256 offset, uint256 limit)
+        external
+        view
+        returns (TierData[] memory result,uint totalCount)
+    {
+        if(offset >= allTiers.length) {
+            return ( new TierData[](0),allTiers.length);
+        }
+
+        uint256 end = offset + limit;
+        if (end > allTiers.length) {
+            end = allTiers.length;
+        }
+
+        uint256 size = end - offset;
+        result = new TierData[](size);
+        TierData[] memory tierDatas = _getAllTierDatas();
+        for (uint256 i = 0; i < size; i++) {
+            uint256 reverseIndex = tierDatas.length - 1 - offset - i;
+            result[i] = tierDatas[reverseIndex];
+        }
+
+        return (result,tierDatas.length);
+    }
+
+
+    // Thêm hàm lấy số member None tier (không thuộc tier nào):
+    function getNoneTierMemberCount() external view returns (uint256) {
+        uint256 count = 0;
+        
+        for (uint256 i = 0; i < allMembers.length; i++) {
+            Member memory member = allMembers[i];
+            
+            if (member.isActive && member.tierID == bytes32(0)) {
+                count++;
+            }
+        }
+        
+        return count;
+    }
+    
+
+    function GetAllTiersPagination(uint256 offset, uint256 limit)
+        external
+        view
+        returns (TierConfig[] memory result,uint totalCount)
+    {
+        if(offset >= allTiers.length) {
+            return ( new TierConfig[](0),allTiers.length);
+        }
+
+        uint256 end = offset + limit;
+        if (end > allTiers.length) {
+            end = allTiers.length;
+        }
+
+        uint256 size = end - offset;
+        result = new TierConfig[](size);
+
+        for (uint256 i = 0; i < size; i++) {
+            uint256 reverseIndex = allTiers.length - 1 - offset - i;
+            result[i] = allTiers[reverseIndex];
+        }
+
+        return (result,allTiers.length);
+    }
+
 
     /**
      * @dev Cập nhật tỷ giá quy đổi
@@ -1424,7 +1696,7 @@ contract RestaurantLoyaltySystem is
             minTierID: _minTierID,
             isActive: true
         });
-        
+        allEvents.push(events[eventCounter]);
         emit EventCreated(eventCounter, _name, _startTime, _endTime);
         return eventCounter;
     }
@@ -1445,7 +1717,11 @@ contract RestaurantLoyaltySystem is
         eventKQ.pointPlus = _pointPlus;
         eventKQ.minTierID = _minTierID;
         eventKQ.isActive = true;
-        
+        for(uint i; i< allEvents.length; i++){
+            if(allEvents[i].id == _eventId){
+                allEvents[i] = eventKQ;
+            }
+        }
     }
 /**
  * @dev Lấy danh sách sự kiện đang hoạt động với pagination
@@ -1510,6 +1786,11 @@ function getActiveEventsPagination(
     function toggleEvent(uint256 _eventId, bool _isActive) external onlyAdmin {
         require(events[_eventId].id > 0, "Event not found");
         events[_eventId].isActive = _isActive;
+        for(uint i; i< allEvents.length; i++){
+            if(allEvents[i].id == _eventId){
+                allEvents[i].isActive = _isActive;
+            }
+        }
     }
     
     // ============ MEMBER GROUP MANAGEMENT ============
@@ -1520,14 +1801,15 @@ function getActiveEventsPagination(
         bytes32 groupId = keccak256(abi.encodePacked(_name, block.timestamp));
         require(memberGroups[groupId].id == bytes32(0), "Group already exists");
         
-        memberGroups[groupId] = MemberGroup({
+        MemberGroup memory newGroup = MemberGroup({
             id: groupId,
             name: _name,
             isActive: true
         });
         
+        memberGroups[groupId] = newGroup;
         allGroupIds.push(groupId);
-        allMemberGroups.push(memberGroups[groupId]);
+        allMemberGroups.push(newGroup);
         emit MemberGroupCreated(groupId, _name, block.timestamp);
         
         return groupId;
@@ -1538,97 +1820,276 @@ function getActiveEventsPagination(
     function isMemberGroupId(bytes32 groupId) external view returns (bool) {
         return (memberGroups[groupId].id != bytes32(0));
     }
+    
+    /**
+    * @dev Cập nhật thông tin nhóm khách hàng
+    */
+    function updateMemberGroup(
+        bytes32 _groupId,
+        string memory _name,
+        bool _isActive
+    ) external onlyAdmin {
+        require(memberGroups[_groupId].id != bytes32(0), "Group not found");
+        require(bytes(_name).length > 0, "Group name required");
+        
+        MemberGroup storage group = memberGroups[_groupId];
+        group.name = _name;
+        group.isActive = _isActive;
+        for(uint256 i=0; i< allMemberGroups.length; i++){
+            if(allMemberGroups[i].id == _groupId){
+                allMemberGroups[i] = MemberGroup({
+                    id: _groupId,
+                    name: _name,
+                    isActive: _isActive
+                });
+                break;
+            }
+        }
+        emit MemberGroupUpdated(_groupId, _name, block.timestamp);
+    }
+
 /**
- * @dev Cập nhật thông tin nhóm khách hàng
+ * @dev Xóa nhóm khách hàng (đã fix)
  */
-function updateMemberGroup(
-    bytes32 _groupId,
-    string memory _name,
-    bool _isActive
-) external onlyAdmin {
+function deleteMemberGroup(bytes32 _groupId) external onlyAdmin {
     require(memberGroups[_groupId].id != bytes32(0), "Group not found");
-    require(bytes(_name).length > 0, "Group name required");
     
-    MemberGroup storage group = memberGroups[_groupId];
-    group.name = _name;
-    group.isActive = _isActive;
+    // Gỡ tất cả members khỏi group
+    address[] memory membersInGroup = groupMembers[_groupId];
+    for (uint256 i = 0; i < membersInGroup.length; i++) {
+        address member = membersInGroup[i];
+        
+        // Remove groupId khỏi memberToGroups
+        bytes32[] storage groups = memberToGroups[member];
+        for (uint256 j = 0; j < groups.length; j++) {
+            if (groups[j] == _groupId) {
+                groups[j] = groups[groups.length - 1];
+                groups.pop();
+                break;
+            }
+        }
+    }
     
-    emit MemberGroupUpdated(_groupId, _name, block.timestamp);
+    // Xóa group
+    delete groupMembers[_groupId];
+    delete memberGroups[_groupId];
+    
+    // Xóa khỏi allGroupIds
+    for (uint256 i = 0; i < allGroupIds.length; i++) {
+        if (allGroupIds[i] == _groupId) {
+            allGroupIds[i] = allGroupIds[allGroupIds.length - 1];
+            allGroupIds.pop();
+            break;
+        }
+    }
+    
+    // Xóa khỏi allMemberGroups
+    for (uint256 i = 0; i < allMemberGroups.length; i++) {
+        if (allMemberGroups[i].id == _groupId) {
+            allMemberGroups[i] = allMemberGroups[allMemberGroups.length - 1];
+            allMemberGroups.pop();
+            break;
+        }
+    }
+    
+    emit MemberGroupDeleted(_groupId, block.timestamp);
+}
+/**
+ * @dev Batch assign member vào nhiều groups
+ * Xóa tất cả groups cũ và thay bằng groups mới
+ */
+function batchAssignMemberToGroups(
+    address _member, 
+    bytes32[] memory _groupIds
+) external onlyAdmin memberExists(_member) {
+    require(_groupIds.length > 0, "Group IDs array cannot be empty");
+    
+    // Validate tất cả groupIds trước
+    for (uint256 i = 0; i < _groupIds.length; i++) {
+        require(memberGroups[_groupIds[i]].id != bytes32(0), "Group not found");
+        require(memberGroups[_groupIds[i]].isActive, "Group not active");
+    }
+    
+    // Xóa member khỏi tất cả groups cũ
+    bytes32[] memory oldGroups = memberToGroups[_member];
+    for (uint256 i = 0; i < oldGroups.length; i++) {
+        _removeMemberFromGroupArray(oldGroups[i], _member);
+    }
+    
+    // Clear mảng groups của member
+    delete memberToGroups[_member];
+    
+    // Assign member vào các groups mới
+    for (uint256 i = 0; i < _groupIds.length; i++) {
+        bytes32 groupId = _groupIds[i];
+        
+        // Thêm member vào group
+        groupMembers[groupId].push(_member);
+        
+        // Thêm groupId vào danh sách groups của member
+        memberToGroups[_member].push(groupId);
+        
+        emit MemberAssignedToGroup(_member, groupId, block.timestamp);
+    }
+}
+/**
+ * @dev Assign member vào một group (giữ lại groups cũ)
+ */
+function assignMemberToGroup(address _member, bytes32 _groupId) 
+    external 
+    onlyAdmin 
+    memberExists(_member) 
+{
+    require(memberGroups[_groupId].id != bytes32(0), "Group not found");
+    require(memberGroups[_groupId].isActive, "Group not active");
+    
+    // Kiểm tra member đã trong group này chưa
+    bytes32[] memory currentGroups = memberToGroups[_member];
+    for (uint256 i = 0; i < currentGroups.length; i++) {
+        require(currentGroups[i] != _groupId, "Member already in this group");
+    }
+    
+    // Thêm member vào group
+    groupMembers[_groupId].push(_member);
+    memberToGroups[_member].push(_groupId);
+    
+    emit MemberAssignedToGroup(_member, _groupId, block.timestamp);
+}
+    function getMemberToGroups(address _member) external view returns(bytes32[] memory){
+        return memberToGroups[_member];
+    }
+/**
+ * @dev Remove member khỏi một group cụ thể
+ */
+function removeMemberFromGroup(address _member, bytes32 _groupId) 
+    external 
+    onlyAdmin 
+{
+    require(_isMemberInGroup(_member, _groupId), "Member not in this group");
+    
+    // Remove từ groupMembers
+    _removeMemberFromGroupArray(_groupId, _member);
+    
+    // Remove từ memberToGroups
+    bytes32[] storage groups = memberToGroups[_member];
+    for (uint256 i = 0; i < groups.length; i++) {
+        if (groups[i] == _groupId) {
+            groups[i] = groups[groups.length - 1];
+            groups.pop();
+            break;
+        }
+    }
+    
+    emit MemberRemovedFromGroup(_member, _groupId, block.timestamp);
+}
+/**
+ * @dev Remove member khỏi TẤT CẢ groups
+ */
+function removeMemberFromAllGroups(address _member) external onlyAdmin {
+    bytes32[] memory groups = memberToGroups[_member];
+    
+    for (uint256 i = 0; i < groups.length; i++) {
+        _removeMemberFromGroupArray(groups[i], _member);
+        emit MemberRemovedFromGroup(_member, groups[i], block.timestamp);
+    }
+    
+    delete memberToGroups[_member];
+}
+/**
+ * @dev Internal: Remove member khỏi groupMembers array
+ */
+function _removeMemberFromGroupArray(bytes32 _groupId, address _member) internal {
+    address[] storage members = groupMembers[_groupId];
+    
+    for (uint256 i = 0; i < members.length; i++) {
+        if (members[i] == _member) {
+            members[i] = members[members.length - 1];
+            members.pop();
+            break;
+        }
+    }
 }
 
-    /**
-    * @dev Xóa nhóm khách hàng
-    */
-    function deleteMemberGroup(bytes32 _groupId) external onlyAdmin {
-        require(memberGroups[_groupId].id != bytes32(0), "Group not found");
-        
-        // Gỡ tất cả members khỏi group
-        address[] memory membersInGroup = groupMembers[_groupId];
-        for (uint256 i = 0; i < membersInGroup.length; i++) {
-            delete memberToGroup[membersInGroup[i]];
+/**
+ * @dev Kiểm tra member có trong group không
+ */
+function _isMemberInGroup(address _member, bytes32 _groupId) 
+    internal 
+    view 
+    returns (bool) 
+{
+    bytes32[] memory groups = memberToGroups[_member];
+    for (uint256 i = 0; i < groups.length; i++) {
+        if (groups[i] == _groupId) {
+            return true;
         }
-        
-        // Xóa group
-        delete groupMembers[_groupId];
-        delete memberGroups[_groupId];
-        
-        // Xóa khỏi allGroupIds
-        for (uint256 i = 0; i < allGroupIds.length; i++) {
-            if (allGroupIds[i] == _groupId) {
-                allGroupIds[i] = allGroupIds[allGroupIds.length - 1];
-                allGroupIds.pop();
-                break;
-            }
-        }
-        
-        emit MemberGroupDeleted(_groupId, block.timestamp);
     }
+    return false;
+}
 
-    function assignMemberToGroup(address _member, bytes32 _groupId) 
-        external 
-        onlyAdmin 
-        memberExists(_member) 
-    {
-        require(memberGroups[_groupId].id != bytes32(0), "Group not found");
-        require(memberGroups[_groupId].isActive, "Group not active");
-        
-        memberToGroup[_member] = _groupId;
-        groupMembers[_groupId].push(_member);
-        
-        emit MemberAssignedToGroup(_member, _groupId, block.timestamp);
+/**
+ * @dev Lấy tất cả groups của member
+ */
+function getMemberGroups(address _member) 
+    external 
+    view 
+    returns (bytes32[] memory groupIds, MemberGroup[] memory groupDetails) 
+{
+    groupIds = memberToGroups[_member];
+    groupDetails = new MemberGroup[](groupIds.length);
+    
+    for (uint256 i = 0; i < groupIds.length; i++) {
+        groupDetails[i] = memberGroups[groupIds[i]];
     }
-    function getMemberToGroup(address _member) external view returns(bytes32){
-        return memberToGroup[_member];
-    }
-    /**
-    * @dev Gỡ member khỏi nhóm
-    */
-    function removeMemberFromGroup(address _member) external onlyAdmin {
-        bytes32 groupId = memberToGroup[_member];
-        require(groupId != bytes32(0), "Member not in any group");
-        
-        _removeMemberFromGroup(_member, groupId);
-        
-        emit MemberRemovedFromGroup(_member, groupId, block.timestamp);
-    }
+    
+    return (groupIds, groupDetails);
+}
 
-    /**
-    * @dev Internal function để gỡ member khỏi group
-    */
-    function _removeMemberFromGroup(address _member, bytes32 _groupId) internal {
-        address[] storage members = groupMembers[_groupId];
-        
-        for (uint256 i = 0; i < members.length; i++) {
-            if (members[i] == _member) {
-                members[i] = members[members.length - 1];
-                members.pop();
-                break;
-            }
-        }
-        
-        delete memberToGroup[_member];
+/**
+ * @dev Lấy tất cả members của một group với pagination
+ */
+function getGroupMembersPagination(
+    bytes32 _groupId,
+    uint256 offset,
+    uint256 limit
+) external view returns (
+    address[] memory members,
+    uint256 totalCount
+) {
+    require(memberGroups[_groupId].id != bytes32(0), "Group not found");
+    
+    address[] memory allMembers = groupMembers[_groupId];
+    totalCount = allMembers.length;
+    
+    if (offset >= totalCount) {
+        return (new address[](0), totalCount);
     }
+    
+    uint256 end = offset + limit;
+    if (end > totalCount) {
+        end = totalCount;
+    }
+    
+    uint256 size = end - offset;
+    members = new address[](size);
+    
+    for (uint256 i = 0; i < size; i++) {
+        members[i] = allMembers[offset + i];
+    }
+    
+    return (members, totalCount);
+}
 
+/**
+ * @dev Kiểm tra member có trong group không (public)
+ */
+function isMemberInGroup(address _member, bytes32 _groupId) 
+    external 
+    view 
+    returns (bool) 
+{
+    return _isMemberInGroup(_member, _groupId);
+}
     // ============ MIGRATION FUNCTIONS ============
     
     function freeze() external {
@@ -1836,19 +2297,7 @@ function updateMemberGroup(
         }
     }
     
-    function _calculateTier(uint256 _lifetimePoints) internal view returns (bytes32) {
-        bytes32 currentTierID = bytes32(0);
-        
-        for (uint256 i = 0; i < allTiers.length; i++) {
-            TierConfig memory tier = allTiers[i];
-            
-            if (_lifetimePoints >= tier.pointsRequired && _lifetimePoints < tier.pointsMax) {
-                return tier.id;
-            }
-        }
-        
-        return currentTierID;
-    }
+
     
     function _getTierMultiplier(bytes32 _tierID) internal view returns (uint256) {
         if (_tierID == bytes32(0)) {
@@ -1959,9 +2408,6 @@ function updateMemberGroup(
         return (migrated, migratedTo, totalMigrated, totalSupply);
     }
     
-    function getAllTiers() external view returns (TierConfig[] memory) {
-        return allTiers;
-    }
         /**
      * @dev Get all token holders (for migration)
      */
@@ -2393,7 +2839,39 @@ function getMemberTransactionsByDateRange(
             evt.isActive
         );
     }
-    
+    function getAllEvents()
+        external
+        view
+        returns (Event[] memory )
+    {
+        return allEvents;
+    }
+    function GetAllEventsPagination(uint256 offset, uint256 limit)
+        external
+        view
+        returns (Event[] memory result,uint totalCount)
+    {
+        if(offset >= allEvents.length) {
+            return ( new Event[](0),allEvents.length);
+        }
+
+        uint256 end = offset + limit;
+        if (end > allEvents.length) {
+            end = allEvents.length;
+        }
+
+        uint256 size = end - offset;
+        result = new Event[](size);
+
+        for (uint256 i = 0; i < size; i++) {
+            uint256 reverseIndex = allEvents.length - 1 - offset - i;
+            result[i] = allEvents[reverseIndex];
+        }
+
+        return (result,allEvents.length);
+    }
+
+
     /**
      * @dev Lấy danh sách sự kiện đang hoạt động
      */
@@ -2520,46 +2998,6 @@ function getMemberTransactionsByDateRange(
         
         return count;
     }
-    // Thêm hàm lấy thống kê tất cả tier:
-    function getAllTiersWithMemberCount() external view returns (
-        TierConfig[] memory tiers,
-        uint256[] memory memberCounts
-    ) {
-        tiers = allTiers;
-        memberCounts = new uint256[](allTiers.length);
-        
-        // Đếm members cho từng tier
-        for (uint256 i = 0; i < allTiers.length; i++) {
-            uint256 count = 0;
-            bytes32 tierID = allTiers[i].id;
-            
-            for (uint256 j = 0; j < allMembers.length; j++) {
-                if (allMembers[j].isActive && allMembers[j].tierID == tierID) {
-                    count++;
-                }
-            }
-            
-            memberCounts[i] = count;
-        }
-        
-        return (tiers, memberCounts);
-    }
-
-    // Thêm hàm lấy số member None tier (không thuộc tier nào):
-    function getNoneTierMemberCount() external view returns (uint256) {
-        uint256 count = 0;
-        
-        for (uint256 i = 0; i < allMembers.length; i++) {
-            Member memory member = allMembers[i];
-            
-            if (member.isActive && member.tierID == bytes32(0)) {
-                count++;
-            }
-        }
-        
-        return count;
-    }
-    
         /**
         * @dev Lấy thống kê tổng quan hệ thống
         */

@@ -33,9 +33,10 @@ contract AgentManagement is
     
     // Mappings
     mapping(address => Agent) public agents;
-    mapping(address => address) public agentIQRContracts;
-    mapping(address => address) public agentLoyaltyContracts;
-    mapping(address => MeOSLicense) public meosLicenses;
+    mapping(address =>mapping(uint => address)) public agentIQRContracts;
+    mapping(address =>mapping(uint => address)) public agentLoyaltyContracts;
+    mapping(address => address) public agentBranchManagement; // agent => BranchManagement contract
+    mapping(address => mapping(uint => MeOSLicense)) public meosLicenses;
     address[] public agentList;
     
     // Pause functionality
@@ -44,7 +45,13 @@ contract AgentManagement is
     mapping(address => bool) public isAdmin;
     mapping(string => address) public mDomainToWallet;
     mapping(address => string) public mAgentToDomain;
-    mapping(address => bool) public iqrTransfered;
+    mapping(address =>mapping(uint => bool)) public iqrTransfered;
+    mapping(address => uint[]) public agentToBranchIds;
+    mapping(uint => BranchInfo) public mBranchIdToBranch;
+    mapping(address => uint) public mAgentToMainBranchId;
+    uint public branchIdCount;
+    mapping(uint => bool) public existsInNew;
+
     uint256[47] private __gap;
     // Events
     event SuperAdminSet(address indexed admin);
@@ -131,85 +138,107 @@ contract AgentManagement is
     }
     
     function getSubLocationCount(address _agent) public view returns (uint256) {
-        return agents[_agent].subLocations.length;
+        return agents[_agent].branches.length;
     }
 
     /**
      * @dev Grant permissions to agent
      */
-    function _grantPermissions(address _agent, bool[3] memory _permissions) internal {
+    function _grantPermissions(address _agent, bool[3] memory _permissions, uint[] memory branchIds) internal {
         if (_permissions[0]) {
-            _grantIQRPermission(_agent);
+            _grantIQRPermission(_agent,branchIds);
         }
         
         // Loyalty Permission  
         if (_permissions[1]) {
             require(_permissions[0],"need iqr permission also to set this permission");
-            _grantLoyaltyPermission(_agent);
+            _grantLoyaltyPermission(_agent,branchIds);
         }
         
         // MeOS Permission
         if (_permissions[2]) {
-            _grantMeOSPermission(_agent);
+            _grantMeOSPermission(_agent,branchIds);
         }
     }
-    function _grantIQRPermission(address _agent) internal {
+    function _grantIQRPermission(address _agent, uint[] memory branchIds) internal {
         if (iqrFactory == address(0)) {
             agents[_agent].permissions[0] = false;
             return;
         }
-        address agentIQR = IQRFactory(iqrFactory).getAgentIQRContract(_agent);
-        if(agentIQR != address(0)){
-            IAgentIQR(agentIQR).reactivate();
-        }else{
-            agentIQR = IQRFactory(iqrFactory).createAgentIQR(_agent);
-            agentIQRContracts[_agent] = agentIQR;
-
+         address branchMgmt = agentBranchManagement[_agent];
+        // Tạo BranchManagement contract nếu chưa có
+        if (branchMgmt == address(0)) {
+            branchMgmt = IQRFactory(iqrFactory).createBranchManagement(_agent,branchIds);
+            agentBranchManagement[_agent]=branchMgmt;
         }
-        emit PermissionGranted(_agent, 0, block.timestamp);
-
+        // Tạo IQR contracts cho từng branch và đăng ký vào BranchManagement
+        for(uint i; i < branchIds.length; i++){
+            uint branchIdCount = branchIds[i];
+            address agentIQR = IQRFactory(iqrFactory).getAgentIQRContract(_agent, branchIdCount);
+            
+            if(agentIQR != address(0) && agentIQRContracts[_agent][branchIdCount] != address(0)){
+                IAgentIQR(agentIQR).reactivate();
+            } else {
+                agentIQR = IQRFactory(iqrFactory).createAgentIQR(_agent, branchIdCount);
+                agentIQRContracts[_agent][branchIdCount] = agentIQR;
+                
+                // Đăng ký branch vào BranchManagement
+                BranchInfo memory branchInfo = mBranchIdToBranch[branchIdCount];
+                IBranchManagement(branchMgmt).createBranch(
+                    branchIdCount,
+                    branchInfo.name,
+                    branchInfo.isMain
+                );
+            }
+            emit PermissionGranted(_agent, 0, block.timestamp);
+        }
     }
-
     /**
      * @dev Grant Loyalty permission by deploying contract
      */
-    function _grantLoyaltyPermission(address _agent) internal {
+    function _grantLoyaltyPermission(address _agent, uint[] memory branchIds) internal {
         if (loyaltyFactory == address(0)) {
             agents[_agent].permissions[1] = false;
             return;
         }
-        address contractAddr = ILoyaltyFactory(loyaltyFactory).getAgentLoyaltyContract(_agent);
-        if(contractAddr != address(0)){
-            IRestaurantLoyaltySystem(contractAddr).unfreeze();
-        }else{
-            contractAddr = ILoyaltyFactory(loyaltyFactory).createAgentLoyalty(_agent);
-            agentLoyaltyContracts[_agent] = contractAddr;            // la contract Points
+        for(uint i; i < branchIds.length; i++){
+            uint branchIdCount = branchIds[i];
+            address contractAddr = ILoyaltyFactory(loyaltyFactory).getAgentLoyaltyContract(_agent,branchIdCount);
+            if(contractAddr != address(0)){
+                IRestaurantLoyaltySystem(contractAddr).unfreeze();
+            }else{
+                contractAddr = ILoyaltyFactory(loyaltyFactory).createAgentLoyalty(_agent,branchIdCount);
+                agentLoyaltyContracts[_agent][branchIdCount] = contractAddr;            // la contract Points
+            }
+            emit PermissionGranted(_agent, 1, block.timestamp);
         }
-        emit PermissionGranted(_agent, 1, block.timestamp);
     }
     
     /**
      * @dev Grant MeOS permission by generating license key
      */
-    function _grantMeOSPermission(address _agent) internal {
-        string memory licenseKey = _generateLicenseKey(_agent);
-        uint256 expiryAt = block.timestamp + (365 * 24 * 60 * 60); // 1 year
-        
-        meosLicenses[_agent] = MeOSLicense({
-            licenseKey: licenseKey,
-            isActive: true,
-            createdAt: block.timestamp,
-            expiryAt: expiryAt
-        });
-        
-        emit MeOSLicenseIssued(_agent, licenseKey, expiryAt);
-        emit PermissionGranted(_agent, 2, block.timestamp);
+    function _grantMeOSPermission(address _agent, uint[] memory branchIds) internal {
+        for(uint i; i < branchIds.length; i++){
+            string memory licenseKey = _generateLicenseKey(_agent,branchIds[i]);
+            uint256 expiryAt = block.timestamp + (365 * 24 * 60 * 60); // 1 year
+            
+            meosLicenses[_agent][branchIds[i]] = MeOSLicense({
+                licenseKey: licenseKey,
+                isActive: true,
+                createdAt: block.timestamp,
+                expiryAt: expiryAt
+            });
+            
+            emit MeOSLicenseIssued(_agent, licenseKey, expiryAt);
+            emit PermissionGranted(_agent, 2, block.timestamp);
+
+        }
     }
     
     /**
      * @dev Generate unique license key for MeOS
      */
-    function _generateLicenseKey(address _agent) internal view returns (string memory) {
+    function _generateLicenseKey(address _agent, uint branchIdCount) internal view returns (string memory) {
         return string(abi.encodePacked(
             "MEOS-",
             Strings.toHexString(uint160(_agent), 20),
@@ -218,126 +247,406 @@ contract AgentManagement is
         ));
     }
     
-    /**
-     * @dev Update agent information and permissions
-     */
-    function updateAgent(
-        address _agent,
-        string memory _storeName,
-        string memory _address,
-        string memory _phone,
-        string memory _note,
-        bool[3] memory _permissions,
-        string[] memory _subLocations,
-        string[] memory _subPhones,
-        string memory _domain
-    ) external onlySuperAdmin validAgent(_agent) whenNotPaused nonReentrant {
-        // require( mDomainToWallet[_domain] == address(0),"domain was used");
-        Agent storage agent = agents[_agent];
-        
-        // Update basic info
-        agent.storeName = _storeName;
-        agent.storeAddress = _address;
-        agent.phone = _phone;
-        agent.note = _note;
-        agent.updatedAt = block.timestamp;
-        
-        if(_subLocations.length>0){
-            delete agent.subLocations;
 
-            for(uint i; i < _subLocations.length ;i++){
-                agent.subLocations.push(_subLocations[i]);
-            }
-        }
-        if(_subPhones.length>0){
-            delete agent.subPhones;
-            for(uint i; i < _subPhones.length ;i++){
-                agent.subPhones.push(_subPhones[i]);
-            }
-        }
-
-        // Update permissions
-        _updatePermissions(_agent, _permissions);
-        if( keccak256(abi.encodePacked(agent.domain)) != keccak256(abi.encodePacked(_domain)) && mDomainToWallet[_domain] == address(0)){
+/**
+ * @dev Update agent information and permissions
+ * @return newBranchIds Array of newly created branch IDs
+ */
+function updateAgent(
+    address _agent,
+    string memory _storeName,
+    string memory _address,
+    string memory _phone,
+    string memory _note,
+    bool[3] memory _permissions,
+    string memory _domain,
+    BranchInfo[] memory branchInfos
+) external onlySuperAdmin validAgent(_agent) whenNotPaused nonReentrant returns (uint[] memory newBranchIds) {
+    Agent storage agent = agents[_agent];
+    
+    // Update basic info
+    agent.storeName = _storeName;
+    agent.storeAddress = _address;
+    agent.phone = _phone;
+    agent.note = _note;
+    agent.updatedAt = block.timestamp;
+    
+    // Update main branch info
+    uint mainBranchId = mAgentToMainBranchId[_agent];
+    if (mainBranchId > 0) {
+        BranchInfo storage mainBranch = mBranchIdToBranch[mainBranchId];
+        mainBranch.name = _storeName;
+        mainBranch.location = _address;
+        mainBranch.phone = _phone;
+        
+        // Update domain if changed
+        if (keccak256(abi.encodePacked(mainBranch.domain)) != keccak256(abi.encodePacked(_domain))) {
+            require(mDomainToWallet[_domain] == address(0) || mDomainToWallet[_domain] == _agent, 
+                    "Domain already in use");
+            
+            // Remove old domain mapping
+            delete mDomainToWallet[mainBranch.domain];
+            
+            // Set new domain
+            mainBranch.domain = _domain;
             agent.domain = _domain;
             mDomainToWallet[_domain] = agent.walletAddress;
             mAgentToDomain[agent.walletAddress] = _domain;
-
         }
-
-        emit AgentUpdated(_agent, block.timestamp);
+        
+        // Update main branch in BranchManagement
+        if (agentBranchManagement[_agent] != address(0)) {
+            IBranchManagement(agentBranchManagement[_agent]).updateBranch(
+                mainBranchId,
+                _storeName
+            );
+        }
     }
     
-    /**
-     * @dev Update agent permissions
-     */
-    function _updatePermissions(address _agent, bool[3] memory _newPermissions) internal {
-        Agent storage agent = agents[_agent];
+    // Handle sub-branches update by branchId and get new branch IDs
+    newBranchIds = _updateSubBranchesByIds(_agent, branchInfos);
+     // Grant permissions for new branches if agent already has permissions
+    if (newBranchIds.length > 0) {
+        _grantPermissionsForNewBranches(_agent, newBranchIds, agent.permissions);
+    }
+    // Update permissions with current branch IDs
+    uint[] memory branchIds = agentToBranchIds[_agent];
+    _updatePermissions(_agent, _permissions, branchIds);
+    
+    emit AgentUpdated(_agent, block.timestamp);
+    
+    return newBranchIds;
+}
+
+/**
+ * @dev Update sub-branches by branchId
+ * Logic: 
+ * - branchId = 0: create new branch
+ * - branchId > 0: update existing branch
+ * - branches not in input: delete them
+ * @return newBranchIds Array of newly created branch IDs
+ */
+function _updateSubBranchesByIds(address _agent, BranchInfo[] memory branchInfos) internal returns (uint[] memory) {
+    Agent storage agent = agents[_agent];
+    uint[] storage currentBranchIds = agentToBranchIds[_agent];
+    uint mainBranchId = mAgentToMainBranchId[_agent];
+    address branchMgmt = agentBranchManagement[_agent];
+    
+    // Track which branch IDs are in the new input
+    uint[] memory inputBranchIds = new uint[](branchInfos.length);
+    uint inputBranchCount = 0;
+    
+    // Track new branch IDs created
+    uint[] memory newBranchIds = new uint[](branchInfos.length);
+    uint newBranchCount = 0;
+    
+    // Step 1: Process input - update existing or create new
+    for (uint i = 0; i < branchInfos.length; i++) {
+        BranchInfo memory input = branchInfos[i];
         
-        for (uint8 i = 0; i < 3; i++) {
-            if (agent.permissions[i] != _newPermissions[i]) {
-                if (_newPermissions[i]) {
-                    // Grant permission
-                    if (i == 0) _grantIQRPermission(_agent);
-                    else if (i == 1) _grantLoyaltyPermission(_agent);
-                    else if (i == 2) _grantMeOSPermission(_agent);
-                } else {
-                    // Revoke permission
-                    _revokePermission(_agent, i);
+        if (input.branchId == 0) {
+            // New branch - create it
+            branchIdCount++;
+            uint newBranchId = branchIdCount;
+            
+            // Create new branch
+            mBranchIdToBranch[newBranchId] = BranchInfo({
+                branchId: newBranchId,
+                name: input.name,
+                location: input.location,
+                phone: input.phone,
+                domain: input.domain,
+                isActive: true,
+                isMain: false,
+                createdAt: block.timestamp
+            });
+            
+            // Add to agent's branch list
+            currentBranchIds.push(newBranchId);
+            
+            // Track this new branch ID
+            inputBranchIds[inputBranchCount] = newBranchId;
+            inputBranchCount++;
+            
+            // Add to new branch IDs array
+            newBranchIds[newBranchCount] = newBranchId;
+            newBranchCount++;
+            
+            // // Register new branch in BranchManagement
+            // if (branchMgmt != address(0)) {
+            //     IBranchManagement(branchMgmt).createBranch(
+            //         newBranchId,
+            //         input.name,
+            //         false  // isMain = false
+            //     );
+            // }
+            
+            
+        } else {
+            // Existing branch - update it
+            uint branchId = input.branchId;
+            
+            // Verify this branch belongs to this agent
+            bool belongsToAgent = false;
+            for (uint j = 0; j < currentBranchIds.length; j++) {
+                if (currentBranchIds[j] == branchId) {
+                    belongsToAgent = true;
+                    break;
                 }
-                agent.permissions[i] = _newPermissions[i];
+            }
+            require(belongsToAgent, "Branch does not belong to this agent");
+            require(branchId != mainBranchId, "Cannot modify main branch through sub-branches");
+            
+            // Update existing branch
+            BranchInfo storage existingBranch = mBranchIdToBranch[branchId];
+            existingBranch.name = input.name;
+            existingBranch.location = input.location;
+            existingBranch.phone = input.phone;
+            existingBranch.domain = input.domain;
+            existingBranch.isActive = true;
+            // Keep original createdAt and isMain
+            
+            // Update branch in BranchManagement
+            if (branchMgmt != address(0)) {
+                IBranchManagement(branchMgmt).updateBranch(
+                    branchId,
+                    input.name
+                );
+            }
+            
+            // Track this branch ID
+            inputBranchIds[inputBranchCount] = branchId;
+            inputBranchCount++;
+        }
+    }
+    
+    // Step 2: Delete branches that are not in input (except main branch)
+    uint writeIndex = 0;
+    for (uint i = 0; i < currentBranchIds.length; i++) {
+        uint branchId = currentBranchIds[i];
+        
+        // Check if this branch should be kept
+        bool shouldKeep = (branchId == mainBranchId);
+        
+        if (!shouldKeep) {
+            // Check if this branch ID is in the input
+            for (uint j = 0; j < inputBranchCount; j++) {
+                if (inputBranchIds[j] == branchId) {
+                    shouldKeep = true;
+                    break;
+                }
             }
         }
+        
+        if (shouldKeep) {
+            // Keep this branch
+            if (writeIndex != i) {
+                currentBranchIds[writeIndex] = branchId;
+            }
+            writeIndex++;
+        } else {
+            // Delete this branch
+            _validateBranchDeletion(_agent, branchId);
+            
+            // Deactivate branch in BranchManagement
+            if (branchMgmt != address(0)) {
+                IBranchManagement(branchMgmt).deactivateBranch(branchId);
+            }
+            
+            // Revoke permissions for this branch
+            for (uint8 j = 0; j < 3; j++) {
+                if (agent.permissions[j]) {
+                    _revokePermission(_agent, branchId, j);
+                }
+            }
+            
+            // Deactivate branch
+            mBranchIdToBranch[branchId].isActive = false;
+        }
     }
     
+    // Resize array to remove deleted branches
+    while (currentBranchIds.length > writeIndex) {
+        currentBranchIds.pop();
+    }
+    
+    // Step 3: Rebuild agent.branches array from current branch IDs (excluding main branch)
+    delete agent.branches;
+    for (uint i = 0; i < currentBranchIds.length; i++) {
+        uint branchId = currentBranchIds[i];
+        if (branchId != mainBranchId) {
+            BranchInfo memory branchInfo = mBranchIdToBranch[branchId];
+            agent.branches.push(branchInfo);
+        }
+    }
+    
+    // Step 4: Return array of new branch IDs (resize to actual count)
+    uint[] memory result = new uint[](newBranchCount);
+    for (uint i = 0; i < newBranchCount; i++) {
+        result[i] = newBranchIds[i];
+    }
+    
+    return result;
+}
+/**
+ * @dev Grant permissions for newly created branches (if agent already has those permissions)
+ */
+function _grantPermissionsForNewBranches(
+    address _agent,
+    uint[] memory _newBranchIds,
+    bool[3] memory _currentPermissions
+) internal {
+    // If agent already has IQR permission, grant it to new branches
+    if (_currentPermissions[0]) {
+        _grantIQRPermission(_agent, _newBranchIds);
+    }
+    
+    // If agent already has Loyalty permission, grant it to new branches
+    if (_currentPermissions[1]) {
+        _grantLoyaltyPermission(_agent, _newBranchIds);
+    }
+    
+    // If agent already has MeOS permission, grant it to new branches
+    if (_currentPermissions[2]) {
+        _grantMeOSPermission(_agent, _newBranchIds);
+    }
+}
+/**
+ * @dev Validate if branch can be deleted (check loyalty tokens)
+ */
+function _validateBranchDeletion(address _agent, uint _branchId) internal view {
+    // Cannot delete main branch
+    require(!mBranchIdToBranch[_branchId].isMain, "Cannot delete main branch");
+    
+    // Check if has active loyalty tokens
+    if (agents[_agent].permissions[1]) {
+        address loyaltyContract = agentLoyaltyContracts[_agent][_branchId];
+        if (loyaltyContract != address(0)) {
+            uint256 supply = IRestaurantLoyaltySystem(loyaltyContract).totalSupply();
+            bool isFrozen = IRestaurantLoyaltySystem(loyaltyContract).isFrozen();
+            bool isRedeemOnly = IRestaurantLoyaltySystem(loyaltyContract).isRedeemOnly();
+            
+            require(
+                !(supply > 0 && !isFrozen && !isRedeemOnly),
+                "Branch has active loyalty tokens"
+            );
+        }
+    }
+}
+
+/**
+ * @dev Update agent permissions with branch support
+ */
+function _updatePermissions(
+    address _agent, 
+    bool[3] memory _newPermissions,
+    uint[] memory _branchIds
+) internal {
+    Agent storage agent = agents[_agent];
+    
+    for (uint8 i = 0; i < 3; i++) {
+        if (agent.permissions[i] != _newPermissions[i]) {
+            if (_newPermissions[i]) {
+                // Grant permission
+                if (i == 0) {
+                    _grantIQRPermission(_agent, _branchIds);
+                } else if (i == 1) {
+                    require(agent.permissions[0], "Need IQR permission to set Loyalty permission");
+                    _grantLoyaltyPermission(_agent, _branchIds);
+                } else if (i == 2) {
+                    _grantMeOSPermission(_agent, _branchIds);
+                }
+            } else {
+                // Revoke permission for all branches
+                for (uint j = 0; j < _branchIds.length; j++) {
+                    _revokePermission(_agent, _branchIds[j], i);
+                }
+            }
+            agent.permissions[i] = _newPermissions[i];
+        }
+    }
+}
     /**
      * @dev Revoke specific permission
      */
-    function _revokePermission(address _agent, uint8 _permissionType) internal {
+    function _revokePermission(address _agent,uint _branchId, uint8 _permissionType) internal {
         if (_permissionType == 0) { // IQR
-            address iqrContract = agentIQRContracts[_agent];
+            address iqrContract = agentIQRContracts[_agent][_branchId];
             if (iqrContract != address(0)) {
                 IAgentIQR(iqrContract).deactivate();
             }
         } else if (_permissionType == 1) { // Loyalty
-            address loyaltyContract = agentLoyaltyContracts[_agent];
+            address loyaltyContract = agentLoyaltyContracts[_agent][_branchId];
             if (loyaltyContract != address(0)) {
                 IRestaurantLoyaltySystem(loyaltyContract).freeze();
             }
         } else if (_permissionType == 2) { // MeOS
-            meosLicenses[_agent].isActive = false;
+            meosLicenses[_agent][_branchId].isActive = false;
         }
         
         emit PermissionRevoked(_agent, _permissionType, block.timestamp);
     }
     
-    /**
-     * @dev Delete agent (with loyalty token check)
-     */
-    function deleteAgent(address _agent) external onlySuperAdmin validAgent(_agent) whenNotPaused nonReentrant {
-        // Check if has active loyalty tokens
-        if (agents[_agent].permissions[1]) {
-            address loyaltyContract = agentLoyaltyContracts[_agent];
+/**
+ * @dev Delete agent with improved branch handling
+ * @param _agent Agent address to delete
+ */
+function deleteAgent(address _agent) 
+    external 
+    onlySuperAdmin 
+    validAgent(_agent) 
+    whenNotPaused 
+    nonReentrant 
+{
+    Agent storage agent = agents[_agent];
+    uint[] memory branchIds = agentToBranchIds[_agent];
+    
+    // Check if has active loyalty tokens in ANY branch
+    if (agent.permissions[1]) {
+        for (uint i = 0; i < branchIds.length; i++) {
+            address loyaltyContract = agentLoyaltyContracts[_agent][branchIds[i]];
             if (loyaltyContract != address(0)) {
-                uint256 supply = IRestaurantLoyaltySystem(loyaltyContract).totalSupply(); 
-                bool isFrozen = IRestaurantLoyaltySystem(loyaltyContract).isFrozen(); 
+                uint256 supply = IRestaurantLoyaltySystem(loyaltyContract).totalSupply();
+                bool isFrozen = IRestaurantLoyaltySystem(loyaltyContract).isFrozen();
                 bool isRedeemOnly = IRestaurantLoyaltySystem(loyaltyContract).isRedeemOnly();
-                require(!(supply > 0 && !isFrozen && !isRedeemOnly),"HasActiveLoyaltyTokens");
+                
+                require(
+                    !(supply > 0 && !isFrozen && !isRedeemOnly),
+                    "HasActiveLoyaltyTokens in one or more branches"
+                );
             }
         }
-        
-        // Revoke all permissions first
-        bool[3] memory noPermissions = [false, false, false];
-        _updatePermissions(_agent, noPermissions);
-        
-        // Mark as deleted
-        agents[_agent].isActive = false;
-        agents[_agent].updatedAt = block.timestamp;
-        agents[_agent].exists = false;
-        deletedAgents.push(agents[_agent]);
-        emit AgentDeleted(_agent, block.timestamp);
     }
-    function getDeletedAgentd() external view returns(Agent[] memory){
+    
+    // Revoke all permissions for all branches
+    bool[3] memory noPermissions = [false, false, false];
+    _updatePermissions(_agent, noPermissions, branchIds);
+    
+    // Deactivate all branches
+    for (uint i = 0; i < branchIds.length; i++) {
+        if (mBranchIdToBranch[branchIds[i]].isActive) {
+            mBranchIdToBranch[branchIds[i]].isActive = false;
+        }
+    }
+    
+    // Clear domain mappings
+    if (bytes(agent.domain).length > 0) {
+        delete mDomainToWallet[agent.domain];
+        delete mAgentToDomain[_agent];
+    }
+    
+    // Mark as deleted
+    agent.isActive = false;
+    agent.updatedAt = block.timestamp;
+    agent.exists = false;
+    
+    // Store in deleted agents array
+    deletedAgents.push(agent);
+    
+    emit AgentDeleted(_agent, block.timestamp);
+}
+
+function getDeletedAgentd() external view returns(Agent[] memory){
         return deletedAgents;
     }
 
@@ -534,7 +843,7 @@ function _addressToString(address _addr) internal pure returns (string memory) {
     /**
      * @dev Unlock loyalty tokens for agent
      */
-    function unlockLoyaltyTokens(address _agent) 
+    function unlockLoyaltyTokens(address _agent, uint _branchId) 
         external 
         onlySuperAdmin 
         validAgent(_agent) 
@@ -542,7 +851,7 @@ function _addressToString(address _addr) internal pure returns (string memory) {
         nonReentrant 
         returns (uint256) 
     {
-        address loyaltyContract = agentLoyaltyContracts[_agent];
+        address loyaltyContract = agentLoyaltyContracts[_agent][_branchId];
         if (loyaltyContract == address(0)) return 0;
         uint unlockedAmount =  IRestaurantLoyaltySystem(loyaltyContract).unlockTokens();
         emit LoyaltyTokensUnlocked(_agent, unlockedAmount);
@@ -560,7 +869,9 @@ function _addressToString(address _addr) internal pure returns (string memory) {
     */
     function migrateLoyaltyTokens(
         address _oldAgent, 
-        address _newAgent
+        address _newAgent,
+        uint _branchIdOldAgent,
+        uint _branchIdNewAgent
     ) 
         external 
         onlySuperAdmin 
@@ -577,8 +888,8 @@ function _addressToString(address _addr) internal pure returns (string memory) {
         require(agents[_oldAgent].exists && agents[_newAgent].exists, "Agent not found");
         require(_oldAgent != _newAgent, "Cannot migrate to same agent");
         
-        address oldContract = agentLoyaltyContracts[_oldAgent];
-        address newContract = agentLoyaltyContracts[_newAgent];
+        address oldContract = agentLoyaltyContracts[_oldAgent][_branchIdOldAgent];
+        address newContract = agentLoyaltyContracts[_newAgent][_branchIdNewAgent];
         
         require(oldContract != address(0), "Old contract not found");
         require(newContract != address(0), "New contract not found");
@@ -618,7 +929,7 @@ function _addressToString(address _addr) internal pure returns (string memory) {
     /**
     * @dev Get migration status for an agent
     */
-    function getLoyaltyMigrationStatus(address _agent)
+    function getLoyaltyMigrationStatus(address _agent,uint _branchId)
         external
         view
         validAgent(_agent)
@@ -630,7 +941,7 @@ function _addressToString(address _addr) internal pure returns (string memory) {
             uint256 tokenHolderCount
         )
     {
-        address loyaltyContract = agentLoyaltyContracts[_agent];
+        address loyaltyContract = agentLoyaltyContracts[_agent][_branchId];
         if (loyaltyContract == address(0)) {
             return (false, address(0), 0, 0, 0);
         }
@@ -648,7 +959,7 @@ function _addressToString(address _addr) internal pure returns (string memory) {
     /**
     * @dev Verify migration completion
     */
-    function verifyLoyaltyMigration(address _oldAgent, address _newAgent)
+    function verifyLoyaltyMigration(address _oldAgent, address _newAgent,uint _branchId)
         external
         view
         returns (
@@ -659,8 +970,8 @@ function _addressToString(address _addr) internal pure returns (string memory) {
             string memory status
         )
     {
-        address oldContract = agentLoyaltyContracts[_oldAgent];
-        address newContract = agentLoyaltyContracts[_newAgent];
+        address oldContract = agentLoyaltyContracts[_oldAgent][_branchId];
+        address newContract = agentLoyaltyContracts[_newAgent][_branchId];
         
         if (oldContract == address(0) || newContract == address(0)) {
             return (false, false, 0, 0, "Contracts not found");
@@ -696,13 +1007,13 @@ function _addressToString(address _addr) internal pure returns (string memory) {
     /**
      * @dev Set loyalty contract to redeem-only mode
      */
-    function setLoyaltyRedeemOnly(address _agent, uint256 _days) 
+    function setLoyaltyRedeemOnly(address _agent,uint _branchId, uint256 _days) 
         external 
         onlySuperAdmin 
         validAgent(_agent) 
         whenNotPaused 
     {
-        address loyaltyContract = agentLoyaltyContracts[_agent];
+        address loyaltyContract = agentLoyaltyContracts[_agent][_branchId];
        require(loyaltyContract != address(0),"ContractNotSet");
         
         IRestaurantLoyaltySystem(loyaltyContract).setRedeemOnly(_days);
@@ -773,7 +1084,12 @@ function _addressToString(address _addr) internal pure returns (string memory) {
     function getAgent(address _agent) external view returns (Agent memory) {
         return agents[_agent];
     }
-    
+    function getAgents(address[] memory agentAdds)external view returns (Agent[] memory agentArr) {
+        agentArr = new Agent[](agentAdds.length);
+        for(uint i=0; i<agentAdds.length; i++){
+            agentArr[i] = agents[agentAdds[i]];
+        }
+    }
     /**
      * @dev Get all agents
      */
@@ -875,13 +1191,13 @@ function _addressToString(address _addr) internal pure returns (string memory) {
     /**
      * @dev Get MeOS license for agent
      */
-    function getMeOSLicense(address _agent) 
+    function getMeOSLicense(address _agent,uint _branchId) 
         external 
         view 
         validAgent(_agent) 
         returns (MeOSLicense memory) 
     {
-        return meosLicenses[_agent];
+        return meosLicenses[_agent][_branchId];
     }
     
     /**

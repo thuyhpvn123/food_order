@@ -7,12 +7,15 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "./interfaces/IAgent.sol";
 import {AgentIQR} from "./agentIqr.sol";
+import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+// import "forge-std/console.sol";
 
 contract IQRFactory is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     
     string public version;
     
-    mapping(address => address) public agentIQRContracts;
+    mapping(address =>mapping(uint => address)) public agentIQRContracts;
+    mapping(address => address) public agentBranchManagement;
     address[] public deployedContracts;
     address public enhancedAgent;
     address public MANAGEMENT; //chỉ là implement, not proxy
@@ -24,8 +27,9 @@ contract IQRFactory is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     address public revenueManager;
     address public StaffAgentStore;
     address public POINTS;
+    address public BRANCH_MANAGEMENT_IMP;
     uint256[50] private __gap;
-    event AgentIQRCreated(address indexed agent, address indexed contractAddr, uint256 timestamp);
+    event AgentIQRCreated(address indexed agent,uint indexed branchId ,address indexed contractAddr, uint256 timestamp);
     event ContractUpgraded(string oldVersion, string newVersion, uint256 timestamp);
     
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -54,9 +58,10 @@ contract IQRFactory is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         address _TIMEKEEPING,
         address _cardVisa,
         address _noti,
-        address _revenueManager, //proxy
-        address _StaffAgentStore //proxy
+        address _revenueManager, //proxy dùng cho từng agent
+        address _StaffAgentStore, //proxy dùng cho tất cả agent
         // address _POINTS
+        address _BRANCH_MANAGEMENT_IMP
     )external onlyOwner {
         MANAGEMENT = _MANAGEMENT;
         ORDER = _ORDER;
@@ -66,54 +71,61 @@ contract IQRFactory is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         noti = _noti;
         revenueManager = _revenueManager;
         StaffAgentStore = _StaffAgentStore;
+        BRANCH_MANAGEMENT_IMP = _BRANCH_MANAGEMENT_IMP;
         // POINTS = _POINTS;
     }
-    function createAgentIQR(address _agent) external onlyEnhanceSC returns (address) {
+    function createAgentIQR(address _agent, uint _branchId) external onlyEnhanceSC returns (address) {
         require(MANAGEMENT != address(0) && ORDER != address(0) && REPORT != address(0) && TIMEKEEPING != address(0), //Points có thể để là address(0)
             "addresses of iqr can be address(0)"
         );
         require(_agent != address(0), "Invalid agent");
-        require(agentIQRContracts[_agent] == address(0), "Contract already exists");
+        require(agentIQRContracts[_agent][_branchId] == address(0), "Contract already exists");
         
-        AgentIQR newContract = new AgentIQR(_agent,enhancedAgent,MANAGEMENT,ORDER,REPORT,TIMEKEEPING,revenueManager,StaffAgentStore);
+        AgentIQR newContract = new AgentIQR(_agent,enhancedAgent,MANAGEMENT,ORDER,REPORT,TIMEKEEPING,revenueManager,StaffAgentStore,_branchId);
         address contractAddr = address(newContract);
         
-        agentIQRContracts[_agent] = contractAddr;
+        agentIQRContracts[_agent][_branchId] = contractAddr;
         deployedContracts.push(contractAddr);
         
-        emit AgentIQRCreated(_agent, contractAddr, block.timestamp);
+        emit AgentIQRCreated(_agent,_branchId, contractAddr, block.timestamp);
         return contractAddr;
     }
     //admin gọi ngay sau gọi createAgent
-    function setAgentIQR( address _agent)external onlyEnhanceSC{
+    function setAgentIQR( address _agent, uint _branchId, address _branchManagement)external onlyEnhanceSC{
         require(_agent != address(0), "Invalid agent");
-        require(agentIQRContracts[_agent] != address(0), "Contract does not exist");
-        AgentIQR agentIQR = AgentIQR(agentIQRContracts[_agent]);
-        IQRContracts memory iqrScs = agentIQR.getIQRSCByAgent(_agent);
-        agentIQR.set(_agent,iqrScs.Management,iqrScs.Order,iqrScs.Report,iqrScs.TimeKeeping,cardVisa,noti,iqrScs.StaffAgentStore);
+        require(agentIQRContracts[_agent][_branchId] != address(0), "Contract does not exist");
+        AgentIQR agentIQR = AgentIQR(agentIQRContracts[_agent][_branchId]);
+        IQRContracts memory iqrScs = agentIQR.getIQRSCByAgent(_agent,_branchId);
+        agentIQR.set(_agent,iqrScs.Management,iqrScs.Order,iqrScs.Report,iqrScs.TimeKeeping,cardVisa,noti,iqrScs.StaffAgentStore,_branchManagement);
     }
     //admin gọi ngay sau gọi createAgent nếu có dùng loyalty
-    function setPointsIQRFactory(address _agent, address _Points) external onlyEnhanceSC {
+    function setPointsIQRFactory(address _agent, address _Points, uint _branchId) external onlyEnhanceSC {
         require(_Points != address(0),"Points contract not set yet");
-        AgentIQR agentIQR = AgentIQR(agentIQRContracts[_agent]);
-        agentIQR.setPointSC(_Points,_agent);
-                // IPoint(_POINTS_PROXY).setManagementSC(iqr.Management);
-        // IPoint(_POINTS_PROXY).setOrder(iqr.Order);
+        AgentIQR agentIQR = AgentIQR(agentIQRContracts[_agent][_branchId]);
+        agentIQR.setPointSC(_Points,_agent,_branchId);
 
         POINTS = _Points;
     }
-    function transferOwnerIQRContracts(address _agent)external onlyEnhanceSC {
-        address agentIQR = agentIQRContracts[_agent];
-        IQRContracts memory iqr = IAgentIQR(agentIQR).getIQRSCByAgent(_agent);
+    function transferOwnerIQRContracts(address _agent, uint _branchId)external onlyEnhanceSC {
+        address agentIQR = agentIQRContracts[_agent][_branchId];
+        IQRContracts memory iqr = IAgentIQR(agentIQR).getIQRSCByAgent(_agent,_branchId);
         IAgentIQR(agentIQR).transferOwnerIQR(_agent,iqr.Management,iqr.Order,iqr.Report,iqr.TimeKeeping);
     }
-    function getAgentIQRContract(address _agent) external view returns (address) {
-        return agentIQRContracts[_agent];
+    function getAgentIQRContract(address _agent, uint _branchId) external view returns (address) {
+        return agentIQRContracts[_agent][_branchId];
     }
-    function getIQRSCByAgentFromFactory(address _agent) external view returns (IQRContracts memory) {
-        address agentIqr = agentIQRContracts[_agent];
-        IQRContracts memory iqrContracts = IAgentIQR(agentIqr).getIQRSCByAgent(_agent);
+    function getIQRSCByAgentFromFactory(address _agent, uint _branchId) external view returns (IQRContracts memory) {
+        address agentIqr = agentIQRContracts[_agent][_branchId];
+        IQRContracts memory iqrContracts = IAgentIQR(agentIqr).getIQRSCByAgent(_agent,_branchId);
         return iqrContracts;
+    }
+    function getManagementSCByAgentsFromFactory(address _agent, uint[] memory _branchIds) external view returns (address[] memory managementScs) {
+        managementScs = new address[](_branchIds.length);
+        for(uint i=0; i< _branchIds.length;i++){
+            address agentIqr = agentIQRContracts[_agent][_branchIds[i]];
+            IQRContracts memory iqrContracts = IAgentIQR(agentIqr).getIQRSCByAgent(_agent,_branchIds[i]);
+            managementScs[i] = iqrContracts.Management;
+        }
     }
     function getAllDeployedContracts() external view returns (address[] memory) {
         return deployedContracts;
@@ -122,7 +134,29 @@ contract IQRFactory is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     function getVersion() external view returns (string memory) {
         return version;
     }
-    
+    function createBranchManagement(address _agent,uint[] memory branchIds) external onlyEnhanceSC returns (address) {
+        require(_agent != address(0), "Invalid agent");
+        require(agentBranchManagement[_agent] == address(0), "BranchManagement already exists");
+        // Deploy BranchManagement contract
+        // BranchManagement branchMgmt = new BranchManagement();
+        ERC1967Proxy BRANCH_MANAGEMENT_PROXY = new ERC1967Proxy(
+            address(BRANCH_MANAGEMENT_IMP),
+            abi.encodeWithSelector(IBranchManagement.initialize.selector,
+            _agent)
+        );
+
+        address contractAddr = address(BRANCH_MANAGEMENT_PROXY);
+        agentBranchManagement[_agent] = contractAddr;
+        IBranchManagement(contractAddr).setStaffAgentStore(StaffAgentStore);
+        IBranchManagement(contractAddr).setIqrFactorySC(address(this));
+        IStaffAgentStore(StaffAgentStore).setBranchManagement(contractAddr);
+        IBranchManagement(contractAddr).AddAndUpdateManager(_agent,"main owner","phone","image",true,branchIds,true,true,true,true);
+        return contractAddr;
+    }
+
+    function getBranchManagement(address _agent) external view returns (address) {
+        return agentBranchManagement[_agent];
+    }
 }
 
 

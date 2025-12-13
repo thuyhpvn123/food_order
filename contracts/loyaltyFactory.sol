@@ -14,7 +14,7 @@ contract LoyaltyFactory is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     
     string public version;
     
-    mapping(address => address) public agentLoyaltyContracts;
+    mapping(address =>mapping(uint => address)) public agentLoyaltyContracts;
     address[] public deployedContracts;
     address public enhancedAgent;
     address public POINTS_IMP;
@@ -46,9 +46,9 @@ contract LoyaltyFactory is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         POINTS_IMP = _pointsImp;
     }
     
-    function createAgentLoyalty(address _agent) external onlyEnhanceSC returns (address) {
+    function createAgentLoyalty(address _agent,uint _branchId) external onlyEnhanceSC returns (address) {
         require(_agent != address(0), "Invalid agent");
-        require(agentLoyaltyContracts[_agent] == address(0), "Contract already exists");
+        require(agentLoyaltyContracts[_agent][_branchId] == address(0), "Contract already exists");
         require(POINTS_IMP != address(0),"POINTS_IMP not set yet");
         
         // AgentLoyalty newContract = new AgentLoyalty(_agent,msg.sender);
@@ -61,15 +61,15 @@ contract LoyaltyFactory is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
         address contractAddr = address(POINTS_PROXY);
         
-        agentLoyaltyContracts[_agent] = contractAddr;
+        agentLoyaltyContracts[_agent][_branchId] = contractAddr;
         deployedContracts.push(contractAddr);
         
         emit AgentLoyaltyCreated(_agent, contractAddr, block.timestamp);
         return contractAddr;
     }
     //admin gọi ngay sau gọi createAgent nếu có dùng loyalty
-    function setPointsLoyaltyFactory(address _agent, address _Management,address _Order) external onlyEnhanceSC returns(address) {
-        address POINTS_PROXY = agentLoyaltyContracts[_agent];
+    function setPointsLoyaltyFactory(address _agent, address _Management,address _Order,uint _branchId) external onlyEnhanceSC returns(address) {
+        address POINTS_PROXY = agentLoyaltyContracts[_agent][_branchId];
         IPoint(POINTS_PROXY).setManagementSC(_Management);
         IPoint(POINTS_PROXY).setOrder(_Order);
         return POINTS_PROXY;
@@ -78,8 +78,8 @@ contract LoyaltyFactory is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         require(POINTS_PROXY != address(0),"POINTS_IMP not set yet");
         IPoint(POINTS_PROXY).transferOwnership(_agent);
     }
-    function getAgentLoyaltyContract(address _agent) external view returns (address) {
-        return agentLoyaltyContracts[_agent];
+    function getAgentLoyaltyContract(address _agent,uint _branchId) external view returns (address) {
+        return agentLoyaltyContracts[_agent][_branchId];
     }
     
     function getAllDeployedContracts() external view returns (address[] memory) {

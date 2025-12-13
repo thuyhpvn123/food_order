@@ -5,7 +5,7 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {AgentManagement} from "./agent.sol";
-import {PaginationResult,License,AgentInfo,Agent, AgentAnalytics, TimeFilter, IIQRFactory, ILoyaltyFactory, IRestaurantLoyaltySystem, IAgentIQR, IRevenueManager,IQRContracts} from "./interfaces/IAgent.sol";
+import {PaginationResult,License,AgentInfo,Agent, AgentAnalytics, TimeFilter, IIQRFactory, ILoyaltyFactory, IRestaurantLoyaltySystem, IAgentIQR, IRevenueManager,IQRContracts,BranchInfo,BranchInfoInput} from "./interfaces/IAgent.sol";
 // import "forge-std/console.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 
@@ -21,11 +21,9 @@ contract EnhancedAgentManagement is AgentManagement {
     using Strings for uint256;
 
     // Additional structures for advanced filtering and analytics
-    
     mapping(address => AgentAnalytics) public agentAnalytics;
     mapping(uint256 => address[]) public monthlyAgents; // month timestamp => agents created
     mapping(uint256 => address[]) public yearlyAgents;  // year timestamp => agents created
-        
     // Enhanced events
     event AgentPerformanceUpdated(address indexed agent, uint256 score, uint256 timestamp);
     event BulkOperationCompleted(string operation, uint256 successCount, uint256 failureCount);
@@ -34,7 +32,6 @@ contract EnhancedAgentManagement is AgentManagement {
     // ========================================================================
     // ENHANCED AGENT CREATION WITH ANALYTICS TRACKING
     // ========================================================================
-    
     /**
      * @dev Enhanced agent creation with automatic analytics setup
      */
@@ -46,9 +43,10 @@ contract EnhancedAgentManagement is AgentManagement {
         string memory _phone,
         string memory _note,
         bool[3] memory _permissions,
-        string[] memory _subLocations,
-        string[] memory _subPhones,
-        string memory _domain
+        // string[] memory _subLocations,
+        // string[] memory _subPhones,
+        string memory _domain,
+        BranchInfoInput[] memory branchInfoInputs
     ) external onlySuperAdmin whenNotPaused nonReentrant returns (bool) {
         // Create basic agent using internal function
         bool success = _createAgentInternal(
@@ -58,9 +56,10 @@ contract EnhancedAgentManagement is AgentManagement {
             _phone, 
             _note, 
             _permissions,
-            _subLocations,
-            _subPhones,
-            _domain
+            // _subLocations,
+            // _subPhones,
+            _domain,
+            branchInfoInputs
         );
         
         if (success) {
@@ -95,32 +94,18 @@ contract EnhancedAgentManagement is AgentManagement {
         string memory _phone,
         string memory _note,
         bool[3] memory _permissions,
-        string[] memory _subLocations,
-        string[] memory _subPhones,
-        string memory _domain
+        // string[] memory _subLocations,
+        // string[] memory _subPhones,
+        string memory _domain,
+        BranchInfoInput[] memory branchInfoInputs
     ) internal returns (bool) {
-        require(_subLocations.length == _subPhones.length, "length of subLocations and subPhones not match");
+        // require(_subLocations.length == _subPhones.length, "length of subLocations and subPhones not match");
         require(_walletAddress != address(0),"InvalidWallet");
         require(!agents[_walletAddress].exists,"DuplicateAgent");
         require(bytes(_storeName).length != 0 && bytes(_storeName).length < 100,"Invalid Store Name");
-        // require( mDomainToWallet[_domain] == address(0),"domain was used");
         mDomainToWallet[_domain] = _walletAddress;
         mAgentToDomain[_walletAddress] = _domain;
-        agents[_walletAddress] = Agent({
-            walletAddress: _walletAddress,
-            storeName: _storeName,
-            storeAddress: _address,
-            phone: _phone,
-            note: _note,
-            permissions: _permissions,
-            subLocations: _subLocations,
-            subPhones: _subPhones,
-            createdAt: block.timestamp,
-            updatedAt: block.timestamp,
-            isActive: true,
-            exists: true,
-            domain: _domain
-        });
+        
         
         agentList.push(_walletAddress);
         
@@ -128,38 +113,118 @@ contract EnhancedAgentManagement is AgentManagement {
         if (revenueManager != address(0)) {
             IRevenueManager(revenueManager).addAgent(_walletAddress);
         }
-        
-        // Grant permissions with error handling
-        _grantPermissions(_walletAddress, _permissions);
-        
+        branchIdCount++ ;
+        mAgentToMainBranchId[_walletAddress] = branchIdCount;
+        mBranchIdToBranch[branchIdCount] = BranchInfo({
+            branchId: branchIdCount,
+            name: _storeName,
+            location: _address,
+            phone: _phone,
+            domain: _domain,
+            isActive: true,
+            isMain: true,
+            createdAt: block.timestamp
+        });
+        agentToBranchIds[_walletAddress].push(branchIdCount);
+        BranchInfo[] memory branchInfos = new BranchInfo[](branchInfoInputs.length );
+        if (branchInfoInputs.length > 0){
+            for(uint i ; i < branchInfoInputs.length; i++){
+                branchIdCount++ ;
+                BranchInfoInput memory input = branchInfoInputs[i];
+                BranchInfo memory branch = BranchInfo({
+                    branchId: branchIdCount,
+                    name: input.name,
+                    location: input.location,
+                    phone: input.phone,
+                    domain: input.domain,
+                    isActive: true,
+                    isMain: false,
+                    createdAt: block.timestamp
+                });
+                mBranchIdToBranch[branchIdCount] = branch;
+                branchInfos[i] = branch;
+                agentToBranchIds[_walletAddress].push(branchIdCount);          
+            }
+
+        }
+        agents[_walletAddress] = Agent({
+            walletAddress: _walletAddress,
+            storeName: _storeName,
+            storeAddress: _address,
+            phone: _phone,
+            note: _note,
+            permissions: _permissions,
+            // subLocations: _subLocations,
+            // subPhones: _subPhones,
+            createdAt: block.timestamp,
+            updatedAt: block.timestamp,
+            isActive: true,
+            exists: true,
+            domain: _domain,
+            branches: branchInfos
+        });
+         // Grant permissions with error handling
+         _grantPermissions(_walletAddress, _permissions,agentToBranchIds[_walletAddress]);
         emit AgentCreated(_walletAddress, _storeName, block.timestamp);
         return true;
     }
-    function setAgentIQR(address _agent) external onlySuperAdmin{
-        require (iqrFactory != address(0) , "IQRFactory is not set");
-       IIQRFactory(iqrFactory).setAgentIQR(_agent);
-    }
-    //FE goi sau khi goi setAgentIQR neu khong co loyalty, goi sau setPointsIQR neu khong co loyalty 
-    // function transferOwnerIqr(address _agent)external onlySuperAdmin{
-    //     IIQRFactory(iqrFactory).transferOwnerIQRContracts(_agent);
 
-    // }
+    function getAgentBranchIds(address _agent) external view returns(uint[] memory){
+        return agentToBranchIds[_agent];
+    }
+
+    function _setAgentIQR(address _agent,uint _branchId) internal {
+        address _branchManagement = IIQRFactory(iqrFactory).getBranchManagement(_agent);
+        require(_branchManagement != address(0),"branchMangament not set yet");
+        IIQRFactory(iqrFactory).setAgentIQR(_agent,_branchId, _branchManagement);
+    }
+
+    //FE goi BatchSetAgentIQR hoặc BatchSetAllAgentIQR sau khi goi createAgent
+    function BatchSetAgentIQR(address _agent,uint[] memory _branchIds)external onlySuperAdmin{
+        require (iqrFactory != address(0) , "IQRFactory is not set");
+        require(_branchIds.length>0,"have no branch id found");
+        for(uint i; i< _branchIds.length; i++){
+            _setAgentIQR( _agent,_branchIds[i]);
+        }
+    }
+    function BatchSetAllAgentIQR(address _agent)external onlySuperAdmin{
+        require (iqrFactory != address(0) , "IQRFactory is not set");
+        uint[] memory _branchIds = agentToBranchIds[_agent];
+        require(_branchIds.length>0,"have no branch id found");
+        for(uint i; i< _branchIds.length; i++){
+            _setAgentIQR( _agent,_branchIds[i]);
+        }
+    }
+    function BatchSetAllPointsIQR(address _agent)external onlySuperAdmin{
+        require (iqrFactory != address(0) , "IQRFactory is not set");
+        uint[] memory _branchIds = agentToBranchIds[_agent];
+        require(_branchIds.length>0,"have no branch id found");
+        for(uint i; i< _branchIds.length; i++){
+             _setPointsIQR(_agent,_branchIds[i]);
+        }
+    }
+
     //hàm này luôn gọi sau createAgent để tranfer quyền bộ iqr contract cho agent
     //dang le goi trong hàm createAgent nhung phai tach ra de tranh loi out of gas cho FE
-    function setPointsIQR(address _agent)external onlySuperAdmin{
-        if (agentLoyaltyContracts[_agent] != address(0) ){
-            IIQRFactory(iqrFactory).setPointsIQRFactory(_agent,agentLoyaltyContracts[_agent]);
-            IQRContracts memory iqr = IIQRFactory(iqrFactory).getIQRSCByAgentFromFactory(_agent);
-            address POINTS_PROXY = ILoyaltyFactory(loyaltyFactory).setPointsLoyaltyFactory(_agent,iqr.Management, iqr.Order);
+    function _setPointsIQR(address _agent,uint _branchId) internal{
+        if (agentLoyaltyContracts[_agent][_branchId] != address(0) ){
+            IIQRFactory(iqrFactory).setPointsIQRFactory(_agent,agentLoyaltyContracts[_agent][_branchId],_branchId);
+            IQRContracts memory iqr = IIQRFactory(iqrFactory).getIQRSCByAgentFromFactory(_agent,_branchId);
+            address POINTS_PROXY = ILoyaltyFactory(loyaltyFactory).setPointsLoyaltyFactory(_agent,iqr.Management, iqr.Order,_branchId);
             ILoyaltyFactory(loyaltyFactory).transferOwnerPointSC(_agent,POINTS_PROXY);
         }
         //transfer owner to agent
-        if(iqrTransfered[_agent] == false){
-            IIQRFactory(iqrFactory).transferOwnerIQRContracts(_agent);
-            iqrTransfered[_agent] = true ;
+        if(iqrTransfered[_agent][_branchId] == false){
+            IIQRFactory(iqrFactory).transferOwnerIQRContracts(_agent,_branchId);
+            iqrTransfered[_agent][_branchId] = true ;
         }
     }
-
+    function BatchSetPointsIQR(address _agent,uint[] memory _branchIds )external onlySuperAdmin{
+        require(_branchIds.length>0,"have no branch id found");
+        for(uint i; i< _branchIds.length; i++){
+            _setPointsIQR(_agent,_branchIds[i]);
+        }
+    }
     function CheckAgentExisted(address _agent)external view returns(bool){
         return agents[_agent].exists;
     }
@@ -383,160 +448,160 @@ contract EnhancedAgentManagement is AgentManagement {
         return 0;
     }
     
-    // ========================================================================
-    // BULK OPERATIONS
-    // ========================================================================
+    // // ========================================================================
+    // // BULK OPERATIONS
+    // // ========================================================================
     
-    /**
-     * @dev Bulk delete agents (with safety checks)
-     */
-    function bulkUpdatePermissions(
-        address[] memory _agents,
-        bool[3] memory _permissions
-    ) external onlySuperAdmin nonReentrant returns (uint256 successCount, uint256 failureCount) {
-        for (uint256 i = 0; i < _agents.length; i++) {
-            if (_safeBulkUpdatePermission(_agents[i], _permissions)) {
-                successCount++;
-            } else {
-                failureCount++;
-            }
-        }
+    // /**
+    //  * @dev Bulk delete agents (with safety checks)
+    //  */
+    // function bulkUpdatePermissions(
+    //     address[] memory _agents,
+    //     bool[3] memory _permissions
+    // ) external onlySuperAdmin nonReentrant returns (uint256 successCount, uint256 failureCount) {
+    //     for (uint256 i = 0; i < _agents.length; i++) {
+    //         if (_safeBulkUpdatePermission(_agents[i], _permissions)) {
+    //             successCount++;
+    //         } else {
+    //             failureCount++;
+    //         }
+    //     }
         
-        emit BulkOperationCompleted("updatePermissions", successCount, failureCount);
-    }
+    //     emit BulkOperationCompleted("updatePermissions", successCount, failureCount);
+    // }
     
-    /**
-     * @dev Safe permission update for bulk operations
-     */
-    function _safeBulkUpdatePermission(
-        address _agent,
-        bool[3] memory _newPermissions
-    ) internal returns (bool) {
-        // Validate agent
-        if (!agents[_agent].exists || !agents[_agent].isActive) {
-            return false;
-        }
+    // /**
+    //  * @dev Safe permission update for bulk operations
+    //  */
+    // function _safeBulkUpdatePermission(
+    //     address _agent,
+    //     bool[3] memory _newPermissions
+    // ) internal returns (bool) {
+    //     // Validate agent
+    //     if (!agents[_agent].exists || !agents[_agent].isActive) {
+    //         return false;
+    //     }
         
-        Agent storage agent = agents[_agent];
-        bool hasChanges = false;
+    //     Agent storage agent = agents[_agent];
+    //     bool hasChanges = false;
         
-        // Update each permission individually with error handling
-        for (uint8 i = 0; i < 3; i++) {
-            if (agent.permissions[i] != _newPermissions[i]) {
-                hasChanges = true;
+    //     // Update each permission individually with error handling
+    //     for (uint8 i = 0; i < 3; i++) {
+    //         if (agent.permissions[i] != _newPermissions[i]) {
+    //             hasChanges = true;
                 
-                if (_newPermissions[i]) {
-                    // Grant permission
-                    // bool success = false;
-                    _grantIQRPermissionSafe(_agent);
-                    _grantLoyaltyPermissionSafe(_agent);
-                    _grantMeOSPermission(_agent);                    
-                    agent.permissions[i] = true;
-                } else {
-                    // Revoke permission
-                    _revokePermission(_agent, i);
-                    agent.permissions[i] = false;
-                }
-            }
-        }
+    //             if (_newPermissions[i]) {
+    //                 // Grant permission
+    //                 // bool success = false;
+    //                 _grantIQRPermissionSafe(_agent);
+    //                 _grantLoyaltyPermissionSafe(_agent);
+    //                 _grantMeOSPermission(_agent);                    
+    //                 agent.permissions[i] = true;
+    //             } else {
+    //                 // Revoke permission
+    //                 _revokePermission(_agent, i);
+    //                 agent.permissions[i] = false;
+    //             }
+    //         }
+    //     }
         
-        if (hasChanges) {
-            agent.updatedAt = block.timestamp;
-            emit AgentUpdated(_agent, block.timestamp);
-        }
+    //     if (hasChanges) {
+    //         agent.updatedAt = block.timestamp;
+    //         emit AgentUpdated(_agent, block.timestamp);
+    //     }
         
-        return true;
-    }
+    //     return true;
+    // }
     
-    /**
-     * @dev Safe IQR permission grant
-     */
-    function _grantIQRPermissionSafe(address _agent) internal {
-        require (iqrFactory != address(0),"iqrFactory address can be address(0)"); 
-        require(agentIQRContracts[_agent] == address(0),"IQRContract already exists"); 
+    // /**
+    //  * @dev Safe IQR permission grant
+    //  */
+    // function _grantIQRPermissionSafe(address _agent) internal {
+    //     require (iqrFactory != address(0),"iqrFactory address can be address(0)"); 
+    //     require(agentIQRContracts[_agent] == address(0),"IQRContract already exists"); 
         
-        address contractAddr = IIQRFactory(iqrFactory).createAgentIQR(_agent);
-        agentIQRContracts[_agent] = contractAddr;
-        emit PermissionGranted(_agent, 0, block.timestamp);
-    }
+    //     address contractAddr = IIQRFactory(iqrFactory).createAgentIQR(_agent);
+    //     agentIQRContracts[_agent] = contractAddr;
+    //     emit PermissionGranted(_agent, 0, block.timestamp);
+    // }
     
-    /**
-     * @dev Safe Loyalty permission grant
-     */
-    function _grantLoyaltyPermissionSafe(address _agent) internal  {
-        require (loyaltyFactory != address(0),"loyaltyFactory address can be address(0)") ;
-        require (agentLoyaltyContracts[_agent] == address(0),"agentLoyaltyContracts already exists") ; // Already exists
+    // /**
+    //  * @dev Safe Loyalty permission grant
+    //  */
+    // function _grantLoyaltyPermissionSafe(address _agent,uint _branchId) internal  {
+    //     require (loyaltyFactory != address(0),"loyaltyFactory address can be address(0)") ;
+    //     require (agentLoyaltyContracts[_agent][_branchId] == address(0),"agentLoyaltyContracts already exists") ; // Already exists
         
-        address contractAddr = ILoyaltyFactory(loyaltyFactory).createAgentLoyalty(_agent);
-            agentLoyaltyContracts[_agent] = contractAddr;
-            emit PermissionGranted(_agent, 1, block.timestamp);
-    }
+    //     address contractAddr = ILoyaltyFactory(loyaltyFactory).createAgentLoyalty(_agent,_branchId);
+    //         agentLoyaltyContracts[_agent][_branchId] = contractAddr;
+    //         emit PermissionGranted(_agent, 1, block.timestamp);
+    // }
     
-    /**
-     * @dev Bulk delete agents - CORRECTED VERSION
-     */
-    function bulkDeleteAgents(address[] memory _agents) 
-        external 
-        onlySuperAdmin 
-        nonReentrant 
-        returns (uint256 successCount, uint256 failureCount) 
-    {
-        for (uint256 i = 0; i < _agents.length; i++) {
-            if (_safeDeleteAgent(_agents[i])) {
-                successCount++;
-            } else {
-                failureCount++;
-            }
-        }
+    // /**
+    //  * @dev Bulk delete agents - CORRECTED VERSION
+    //  */
+    // function bulkDeleteAgents(address[] memory _agents) 
+    //     external 
+    //     onlySuperAdmin 
+    //     nonReentrant 
+    //     returns (uint256 successCount, uint256 failureCount) 
+    // {
+    //     for (uint256 i = 0; i < _agents.length; i++) {
+    //         if (_safeDeleteAgent(_agents[i])) {
+    //             successCount++;
+    //         } else {
+    //             failureCount++;
+    //         }
+    //     }
         
-        emit BulkOperationCompleted("delete", successCount, failureCount);
-    }
+    //     emit BulkOperationCompleted("delete", successCount, failureCount);
+    // }
     
-    /**
-     * @dev Safe agent deletion for bulk operations
-     */
-    function _safeDeleteAgent(address _agent) internal returns (bool) {
-        // Validate agent exists
-        if (!agents[_agent].exists) {
-            return false;
-        }
+    // /**
+    //  * @dev Safe agent deletion for bulk operations
+    //  */
+    // function _safeDeleteAgent(address _agent,uint _branchId) internal returns (bool) {
+    //     // Validate agent exists
+    //     if (!agents[_agent].exists) {
+    //         return false;
+    //     }
         
-        // Check if has active loyalty tokens
-        if (agents[_agent].permissions[1]) {
-            address loyaltyContract = agentLoyaltyContracts[_agent];
-            if (loyaltyContract != address(0)) {
-                try IRestaurantLoyaltySystem(loyaltyContract).totalSupply() returns (uint256 supply) {
-                    if (supply > 0) {
-                        try IRestaurantLoyaltySystem(loyaltyContract).isFrozen() returns (bool isFrozen) {
-                            try IRestaurantLoyaltySystem(loyaltyContract).isRedeemOnly() returns (bool isRedeemOnly) {
-                                if (!isFrozen && !isRedeemOnly) {
-                                    return false; // Cannot delete with active tokens
-                                }
-                            } catch {
-                                return false;
-                            }
-                        } catch {
-                            return false;
-                        }
-                    }
-                } catch {
-                    // If we can't read supply, play it safe
-                    return false;
-                }
-            }
-        }
+    //     // Check if has active loyalty tokens
+    //     if (agents[_agent].permissions[1]) {
+    //         address loyaltyContract = agentLoyaltyContracts[_agent][_branchId];
+    //         if (loyaltyContract != address(0)) {
+    //             try IRestaurantLoyaltySystem(loyaltyContract).totalSupply() returns (uint256 supply) {
+    //                 if (supply > 0) {
+    //                     try IRestaurantLoyaltySystem(loyaltyContract).isFrozen() returns (bool isFrozen) {
+    //                         try IRestaurantLoyaltySystem(loyaltyContract).isRedeemOnly() returns (bool isRedeemOnly) {
+    //                             if (!isFrozen && !isRedeemOnly) {
+    //                                 return false; // Cannot delete with active tokens
+    //                             }
+    //                         } catch {
+    //                             return false;
+    //                         }
+    //                     } catch {
+    //                         return false;
+    //                     }
+    //                 }
+    //             } catch {
+    //                 // If we can't read supply, play it safe
+    //                 return false;
+    //             }
+    //         }
+    //     }
         
-        // Revoke all permissions
-        bool[3] memory noPermissions = [false, false, false];
-        _safeBulkUpdatePermission(_agent, noPermissions);
+    //     // Revoke all permissions
+    //     bool[3] memory noPermissions = [false, false, false];
+    //     _safeBulkUpdatePermission(_agent, noPermissions);
         
-        // Mark as deleted
-        agents[_agent].isActive = false;
-        agents[_agent].updatedAt = block.timestamp;
+    //     // Mark as deleted
+    //     agents[_agent].isActive = false;
+    //     agents[_agent].updatedAt = block.timestamp;
         
-        emit AgentDeleted(_agent, block.timestamp);
-        return true;
-    }
+    //     emit AgentDeleted(_agent, block.timestamp);
+    //     return true;
+    // }
     
     // ========================================================================
     // ANALYTICS AND PERFORMANCE TRACKING
@@ -751,7 +816,7 @@ contract EnhancedAgentManagement is AgentManagement {
     /**
      * @dev Get agent status summary
      */
-    function getAgentStatusSummary(address _agent) 
+    function getAgentStatusSummary(address _agent, uint _branchId) 
         external 
         view 
         validAgent(_agent) 
@@ -772,19 +837,19 @@ contract EnhancedAgentManagement is AgentManagement {
         performanceScore = analytics.performanceScore;
         
         // Check active contracts
-        if (permissions[0] && agentIQRContracts[_agent] != address(0)) {
-            bool active = IAgentIQR(agentIQRContracts[_agent]).isActive();
+        if (permissions[0] && agentIQRContracts[_agent][_branchId] != address(0)) {
+            bool active = IAgentIQR(agentIQRContracts[_agent][_branchId]).isActive();
             hasActiveIQR = active;
         }
         
-        if (permissions[1] && agentLoyaltyContracts[_agent] != address(0)) {
-            bool frozen = IRestaurantLoyaltySystem(agentLoyaltyContracts[_agent]).isFrozen();
+        if (permissions[1] && agentLoyaltyContracts[_agent][_branchId] != address(0)) {
+            bool frozen = IRestaurantLoyaltySystem(agentLoyaltyContracts[_agent][_branchId]).isFrozen();
             hasActiveLoyalty = !frozen;
         }
         
         if (permissions[2]) {
-            hasActiveMeOS = meosLicenses[_agent].isActive && 
-                          meosLicenses[_agent].expiryAt > block.timestamp;
+            hasActiveMeOS = meosLicenses[_agent][_branchId].isActive && 
+                          meosLicenses[_agent][_branchId].expiryAt > block.timestamp;
         }
     }
     /**

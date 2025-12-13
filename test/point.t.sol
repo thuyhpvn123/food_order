@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import "forge-std/Test.sol";
 import "../contracts/agentLoyalty.sol";
 import "../contracts/interfaces/IPoint.sol";
-import "./res.t.sol";
+import "./res_old.t.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 contract RestaurantLoyaltySystemTest is RestaurantTest {
@@ -48,9 +48,9 @@ contract RestaurantLoyaltySystemTest is RestaurantTest {
 
     function setTierConfig()public {
         vm.startPrank(admin);
-        POINTS.createTierConfig("Silver",1000,110,3000,"xanh");
-        POINTS.createTierConfig("Gold",3000,150,7000,"do");
-        POINTS.createTierConfig("Platinum",7000,200,0,"vang");
+        POINTS.createTierConfig("Silver",1000,110,"xanh");
+        POINTS.createTierConfig("Gold",3000,150,"do");
+        POINTS.createTierConfig("Platinum",7000,200,"vang");
         TierConfig memory tier = POINTS.getTierConfigFromName("Silver");
         tierID_Silver = tier.id;
         tier = POINTS.getTierConfigFromName("Gold");

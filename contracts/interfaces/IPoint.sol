@@ -78,7 +78,10 @@ pragma solidity ^0.8.20;
         // uint256 validityPeriod;    // Thời hạn giữ hạng (giây)
         string colour;
     }
-    
+    struct TierData {
+        TierConfig tierConfig;
+        uint memberCount; //so luong thanh vien thuoc hang nay 
+    }
     struct PointIssuance {
         uint256 id;                // ID đợt phát hành
         uint256 amount;            // Số lượng xu phát hành
@@ -159,7 +162,7 @@ pragma solidity ^0.8.20;
     }
     
 interface IPoint {
-    function getMemberToGroup(address _member) external view returns (bytes32);
+    function getMemberToGroups(address _member) external view returns (bytes32);
     function redeemVoucherPoints(address _member, uint256 _pointCost) external;
     function getPaymentConfig() external view returns (uint256 exchangeRate,uint256 maxPercentPerInvoice);
      function getMember(address _member) external view returns (

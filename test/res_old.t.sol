@@ -960,6 +960,8 @@ contract RestaurantTest is Test {
 
         //staff comfirm payment 1,2
         vm.startPrank(staff1);
+        ORDER.BatchUpdateCourseStatus(1,orderId1T1,COURSE_STATUS.PREPARING);
+        ORDER.ConfirmOrder(orderId1T1,ORDER_STATUS.CONFIRMED);
         ORDER.confirmPayment(1,payment.id,"paid");
         // Payment memory payment = ORDER.GetPaymentById(idPayment);
         // assertEq(payment.staffComfirm,staff1);
@@ -1045,8 +1047,19 @@ contract RestaurantTest is Test {
     console.log(
         "-----------------------------------------------------------------------------"
     );  
+    //orderPrimaryStaff
+    bytesCodeCall = abi.encodeCall(
+    ORDER.orderPrimaryStaff,
+        (
+            0x269a0632cc153a3b51a74e22b4e2f949bc0f1dd3c0d73c4e5f15ceb70940f475
+        )
+    );
+    console.log("Order orderPrimaryStaff:");
+    console.logBytes(bytesCodeCall);
+    console.log(
+        "-----------------------------------------------------------------------------"
+    ); 
     //
-    
     bytesCodeCall = abi.encodeCall(
     MANAGEMENT.UpdateTable,
         (

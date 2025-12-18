@@ -1897,6 +1897,17 @@ contract AgentManagementIntegrationTest is RestaurantTest {
     console.log(
         "-----------------------------------------------------------------------------"
     ); 
+    //mDomainToWallet
+    bytesCodeCall = abi.encodeCall(
+        enhanced.mDomainToWallet,
+        (
+            "https://comtamsaigon-cn2.fi.ai"
+        ));
+    console.log("mDomainToWallet:");
+    console.logBytes(bytesCodeCall);
+    console.log(
+        "-----------------------------------------------------------------------------"
+    ); 
 
     //updateAgent
     BranchInfo[] memory branchInfos = new BranchInfo[](3);

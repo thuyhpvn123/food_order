@@ -51,8 +51,8 @@ contract AgentManagement is
     mapping(address => uint) public mAgentToMainBranchId;
     uint public branchIdCount;
     mapping(uint => bool) public existsInNew;
-
-    uint256[47] private __gap;
+    mapping(string => uint) public mDomainToBranchId;
+    uint256[46] private __gap;
     // Events
     event SuperAdminSet(address indexed admin);
     event AgentCreated(address indexed agent, string storeName, uint256 timestamp);
@@ -286,11 +286,13 @@ function updateAgent(
             
             // Remove old domain mapping
             delete mDomainToWallet[mainBranch.domain];
+            delete mDomainToBranchId[mainBranch.domain];
             
             // Set new domain
             mainBranch.domain = _domain;
             agent.domain = _domain;
             mDomainToWallet[_domain] = agent.walletAddress;
+            mDomainToBranchId[_domain] = mainBranchId;
             mAgentToDomain[agent.walletAddress] = _domain;
         }
         
@@ -371,7 +373,9 @@ function _updateSubBranchesByIds(address _agent, BranchInfo[] memory branchInfos
             // Add to new branch IDs array
             newBranchIds[newBranchCount] = newBranchId;
             newBranchCount++;
-            
+            mDomainToWallet[input.domain] = _agent;
+            mDomainToBranchId[input.domain] = newBranchId;
+
             // // Register new branch in BranchManagement
             // if (branchMgmt != address(0)) {
             //     IBranchManagement(branchMgmt).createBranch(
@@ -405,7 +409,11 @@ function _updateSubBranchesByIds(address _agent, BranchInfo[] memory branchInfos
             existingBranch.domain = input.domain;
             existingBranch.isActive = true;
             // Keep original createdAt and isMain
-            
+            delete mDomainToWallet[input.domain];
+            delete mDomainToBranchId[input.domain];
+
+            mDomainToWallet[input.domain] = _agent;
+            mDomainToBranchId[input.domain] = branchId;
             // Update branch in BranchManagement
             if (branchMgmt != address(0)) {
                 IBranchManagement(branchMgmt).updateBranch(
@@ -633,6 +641,7 @@ function deleteAgent(address _agent)
     if (bytes(agent.domain).length > 0) {
         delete mDomainToWallet[agent.domain];
         delete mAgentToDomain[_agent];
+        delete mDomainToBranchId[agent.domain];
     }
     
     // Mark as deleted

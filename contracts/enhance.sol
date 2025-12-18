@@ -126,6 +126,7 @@ contract EnhancedAgentManagement is AgentManagement {
             createdAt: block.timestamp
         });
         agentToBranchIds[_walletAddress].push(branchIdCount);
+        mDomainToBranchId[_domain] = branchIdCount;
         BranchInfo[] memory branchInfos = new BranchInfo[](branchInfoInputs.length );
         if (branchInfoInputs.length > 0){
             for(uint i ; i < branchInfoInputs.length; i++){
@@ -143,7 +144,9 @@ contract EnhancedAgentManagement is AgentManagement {
                 });
                 mBranchIdToBranch[branchIdCount] = branch;
                 branchInfos[i] = branch;
-                agentToBranchIds[_walletAddress].push(branchIdCount);          
+                agentToBranchIds[_walletAddress].push(branchIdCount);
+                mDomainToBranchId[branchInfoInputs[i].domain] = branchIdCount;
+                mDomainToWallet[branchInfoInputs[i].domain] = _walletAddress;
             }
 
         }
@@ -228,8 +231,8 @@ contract EnhancedAgentManagement is AgentManagement {
     function CheckAgentExisted(address _agent)external view returns(bool){
         return agents[_agent].exists;
     }
-    function getAgentFromDomain(string memory _domain)external view returns(address){
-        return mDomainToWallet[_domain];
+    function getAgentFromDomain(string memory _domain)external view returns(address agentAdd,uint branchId){
+        return (mDomainToWallet[_domain],mDomainToBranchId[_domain]);
     }
     // ========================================================================
     // ADVANCED FILTERING AND SEARCH

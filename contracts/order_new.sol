@@ -235,12 +235,12 @@ contract RestaurantOrder is
                 break;
             }
         }
-        
+        acknowledgeOrder(orderId);
         emit OrderConfirmed(table, orderId);
     }
 
     // NEW: Acknowledge order - nhân viên nhận đơn
-    function acknowledgeOrder(bytes32 orderId) internal onlyStaff returns (bool) {
+    function acknowledgeOrder(bytes32 orderId) internal  returns (bool) {
         require(!orderAcknowledged[orderId], "Order already acknowledged");
         require(mOrderIdToOrder[orderId].id != bytes32(0), "Order not found");
         
@@ -257,7 +257,10 @@ contract RestaurantOrder is
         
         // Gửi thông báo dismiss cho tất cả staff khác
         address[] memory allStaff = MANAGEMENT.GetActiveStaffAddressesByDate(block.timestamp);
-        _dismissOrderNotification(orderId, allStaff);
+        if( allStaff.length >0){
+            _dismissOrderNotification(orderId, allStaff);
+
+        }
         
         // Ghi lịch sử
         _addOrderHistory(orderId, HistoryAction.ORDER_ACKNOWLEDGED, msg.sender, "Nhan vien A da xac nhan don", address(0));
@@ -488,8 +491,8 @@ contract RestaurantOrder is
         }
         
         // Ghi lịch sử
-        string memory details = string(abi.encodePacked("Da huy don #", orderId));
-        _addOrderHistory(orderId, HistoryAction.ORDER_CANCELLED, msg.sender, details, address(0));
+        // string memory details = string(abi.encodePacked("Da huy don #", orderId));
+        _addOrderHistory(orderId, HistoryAction.ORDER_CANCELLED, msg.sender, "Da huy don", address(0));
         
         emit OrderCancelled(orderId, msg.sender);
         return true;

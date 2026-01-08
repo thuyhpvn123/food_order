@@ -3,10 +3,12 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "./interfaces/IRestaurant.sol";
 import "./interfaces/IAgent.sol";
-
+import "./interfaces/IHistoryTracking.sol";
 // import "forge-std/console.sol";
+import "./interfaces/IFreeGas.sol";
 
 /**
  * @title BranchManagement
@@ -70,7 +72,11 @@ contract BranchManagement is
     IStaffAgentStore public StaffAgentStore;
     address public agent;
     address public iqrFactorySc;
-    uint256[47] private __gap;
+    // History Tracking Contract
+    mapping(uint => address) public mBranchIdToHistoryTrack;
+    address public historyTrackingIMP;
+    address public freeGasSc;
+    uint256[46] private __gap;
     
     // ==================== EVENTS ====================
     
@@ -96,7 +102,7 @@ contract BranchManagement is
         address indexed recipient,
         uint256 branchId
     );
-    
+    event HistoryTrackingUpdated(address indexed newHistoryTracking);
     // ==================== MODIFIERS ====================
     
     modifier onlyMainOwner() {
@@ -162,7 +168,9 @@ contract BranchManagement is
     }
     
     function initialize(
-        address _agent
+        address _agent,
+        address _historyTrackingIMP,
+        address _freeGasSc
     ) public initializer {
         __UUPSUpgradeable_init();
         
@@ -170,27 +178,45 @@ contract BranchManagement is
         isMainOwner[_agent] = true;
         isMainOwner[msg.sender] = true;
         agent = _agent;
+        historyTrackingIMP = _historyTrackingIMP;
+        freeGasSc = _freeGasSc;
     }
     
     function _authorizeUpgrade(address newImplementation) 
         internal 
         override  
     {}
-    
+    // ==================== HISTORY TRACKING SETUP ====================
+    /**
+     * @notice Set History Tracking contract address
+     * @dev Only main owner can set this
+     */
+    function setHistoryTracking(address _historyTracking) external onlyMainOwner {
+        require(_historyTracking != address(0), "Invalid address");
+        historyTrackingIMP = _historyTracking;
+        emit HistoryTrackingUpdated(_historyTracking);
+    }
+    function setFreeGasSc(address _freeGasSc) external onlyMainOwner {
+        require(_freeGasSc != address(0), "Invalid address");
+        freeGasSc = _freeGasSc;
+    }
     // ==================== BRANCH MANAGEMENT ====================
     
-    function setMainOwner(address _agent) external {
-        require(isMainOwner[msg.sender],"only mainOwner");
+    function setMainOwner(address _agent) external onlyMainOwner{
+        // require(isMainOwner[msg.sender],"only mainOwner");
         isMainOwner[_agent] = true;
     }
-    function setStaffAgentStore(address _staffAgentStore)external {
-        require(isMainOwner[msg.sender],"only mainOwner");
+    function setStaffAgentStore(address _staffAgentStore)external onlyMainOwner{
+        // require(isMainOwner[msg.sender],"only mainOwner");
         StaffAgentStore = IStaffAgentStore(_staffAgentStore);
 
     }
     function setIqrFactorySC(address _iqrFactorySc) external {
         require(isMainOwner[msg.sender],"only mainOwner");
         iqrFactorySc = _iqrFactorySc;
+    }
+    function getMainBranchId()external view returns(uint){
+        return mainBranchId;
     }
     /**
      * @notice Tạo chi nhánh mới
@@ -223,8 +249,23 @@ contract BranchManagement is
                 managers[managerAddr].branchIds.push(_newBranchId);
             }
         }
-        
         emit BranchCreated(_newBranchId, _name);
+        //
+        IQRContracts memory iqrSC = IIQRFactory(iqrFactorySc).getIQRSCByAgentFromFactory(agent,_newBranchId);
+        address management = iqrSC.Management;
+
+        ERC1967Proxy historyTrackingSC = new ERC1967Proxy(
+            historyTrackingIMP,
+            abi.encodeWithSelector(IHistoryTracking.initialize.selector,
+            address(this),management,agent)
+        );        
+        mBranchIdToHistoryTrack[_newBranchId] = address(historyTrackingSC);
+        IMANAGEMENT(management).setHistoryTracking(address(historyTrackingSC));
+        address[] memory contracts = new address[](1);
+        contracts[0] = address(historyTrackingSC);
+        if(freeGasSc != address(0)){
+            IFreeGas(freeGasSc).AddSC(agent,contracts);
+        }
         return _newBranchId;
     }
     
@@ -336,9 +377,17 @@ contract BranchManagement is
         // Determine assigned branches
         uint256[] memory assignedBranches;
         if (_isAllBranches) {
+            assignedBranches = new uint256[](branchIds.length);
             assignedBranches = branchIds;
+            if(assignedBranches.length>0){
+
+            }
+
         } else {
+            assignedBranches = new uint256[](_branchIds.length);
             assignedBranches = _branchIds;
+            if(assignedBranches.length>0){
+            }
         }
         if(managerAddresses.length == 0){
             managers[_wallet] = ManagerInfo({
@@ -357,6 +406,15 @@ contract BranchManagement is
             });
             managerAddresses.push(_wallet);
             StaffAgentStore.setAgentForCoOwner(_wallet,agent,assignedBranches);
+            // Record history for first manager (no voting needed)
+            if (address(historyTrackingIMP) != address(0)) {
+                address historyTrack = mBranchIdToHistoryTrack[mainBranchId];
+                IHistoryTracking(historyTrack).recordManagerCreate(
+                    _wallet,
+                    managers[_wallet],
+                    "First manager created"
+                );
+            }
             return;
         }
 
@@ -576,10 +634,10 @@ contract BranchManagement is
                 // TỰ ĐỘNG EXECUTE PROPOSAL DỰA TRÊN TYPE
                 if (proposal.proposalType == ProposalType.EDIT_BANKACCOUNT) {
                     _executePaymentAccountProposal(proposalId);
-                } else if (proposal.proposalType == ProposalType.EDIT_STAFF) {
-                    _executeStaffWalletUpdateProposal(proposalId);
-                } else if (proposal.proposalType == ProposalType.MERCHANT_INFO_CHANGE){
-                    _executeUpdateMerchantProposal(proposalId);
+                // } else if (proposal.proposalType == ProposalType.EDIT_STAFF) {
+                    // _executeStaffWalletUpdateProposal(proposalId);
+                // } else if (proposal.proposalType == ProposalType.MERCHANT_INFO_CHANGE){
+                //     _executeUpdateMerchantProposal(proposalId);
                 } else if (proposal.proposalType == ProposalType.ADD_MANAGER){
                     _executeAddManagerProposal(proposalId);
                 } else if (proposal.proposalType == ProposalType.REMOVE_MANAGER){
@@ -594,12 +652,35 @@ contract BranchManagement is
         }
     }
     
-    function _executeStaffWalletUpdateProposal(uint256 proposalId) internal {       
-    }
+    // function _executeStaffWalletUpdateProposal(uint256 proposalId) internal {       
+    // }
     
-    function _executeUpdateMerchantProposal(uint256 proposalId) internal {       
+    // function _executeUpdateMerchantProposal(uint256 proposalId) internal {       
+    // }
+    function decodeAbiAddManager(bytes memory data) external view returns(
+        address _wallet,
+        string memory _name,
+        string memory _phone,
+        string memory _image,
+        uint256[] memory assignedBranches,
+        bool _hasFullAccess,
+        bool _canViewData,
+        bool _canEditData,
+        bool _canProposeAndVote
+    )
+    {
+        (
+            _wallet,
+            _name,
+            _phone,
+            _image,
+            assignedBranches,
+            _hasFullAccess,
+            _canViewData,
+            _canEditData,
+            _canProposeAndVote
+        ) = abi.decode(data, (address, string, string, string, uint256[], bool, bool, bool, bool));
     }
-    
     /**
      * @notice Execute ADD/UPDATE Manager proposal
      * @dev Tự động thêm hoặc cập nhật manager sau khi proposal được approve
@@ -671,6 +752,15 @@ contract BranchManagement is
             for(uint i=0; i< managementScs.length; i++){
                 IMANAGEMENT(managementScs[i]).setRoleForCoOwner(_wallet);
             }
+            // Record history
+            if (address(historyTrackingIMP) != address(0)) {
+               address historyTrack = mBranchIdToHistoryTrack[mainBranchId];
+                IHistoryTracking(historyTrack).recordManagerCreate(
+                    _wallet,
+                    managers[_wallet],
+                    string(abi.encodePacked("Manager added via proposal"))
+                );
+            }            
             emit ManagerAdded(_wallet, _isCoOwner, assignedBranches);
         }
         
@@ -681,7 +771,14 @@ contract BranchManagement is
         
         proposal.status = ProposalStatus.EXECUTED;
     }
-    
+    function decodeAbiRemoveManager(bytes memory data) external view returns(
+        address _wallet
+    ){
+        (
+            _wallet,
+            ,,,,,,,
+        ) = abi.decode(data, (address, string, string, string, uint256[], bool, bool, bool, bool));
+    }
     /**
      * @notice Execute REMOVE Manager proposal
      * @dev Tự động xóa manager sau khi proposal được approve
@@ -700,7 +797,8 @@ contract BranchManagement is
         require(managers[_wallet].active, "Manager not found");
         
         ManagerInfo storage manager = managers[_wallet];
-        
+        // Record state before deletion
+        ManagerInfo memory deletedManager = manager;
         // Remove from branches
         for (uint256 i = 0; i < manager.branchIds.length; i++) {
             _removeManagerFromBranch(_wallet, manager.branchIds[i]);
@@ -708,7 +806,15 @@ contract BranchManagement is
         
         // Mark as inactive
         manager.active = false;
-        
+        // Record history
+        if (address(historyTrackingIMP) != address(0)) {
+            address historyTrack = mBranchIdToHistoryTrack[mainBranchId];
+                IHistoryTracking(historyTrack).recordManagerDelete(
+                _wallet,
+                deletedManager,
+                string(abi.encodePacked("Manager removed via proposal"))
+            );
+        }
         emit ManagerRemoved(_wallet);
         
         proposal.status = ProposalStatus.EXECUTED;
@@ -1178,7 +1284,21 @@ contract BranchManagement is
         voteProposal(proposalId, true);
 
     }
-
+    function decodeAbiPaymentAccount(bytes memory data) external view returns(
+        string memory _bankAccount,
+        string memory _nameAccount,
+        string memory _nameOfBank,
+        string memory _taxCode,
+        string memory _wallet
+    ){
+        (
+            _bankAccount,
+            _nameAccount,
+            _nameOfBank,
+            _taxCode,
+            _wallet
+        ) = abi.decode(data, (string, string, string, string, string));
+    }
     /**
     * @notice Execute approved payment account proposal
     * @dev Chỉ được gọi tự động khi proposal APPROVED
@@ -1187,7 +1307,11 @@ contract BranchManagement is
         Proposal storage proposal = proposals[proposalId];
         require(proposal.status == ProposalStatus.APPROVED, "Proposal not approved");
         require(proposal.proposalType == ProposalType.EDIT_BANKACCOUNT, "Wrong proposal type");
-        
+        // Decode old and new data
+        PaymentInfo memory oldPayment;
+        if (bytes(paymentInfo.bankAccount).length > 0) {
+            oldPayment = paymentInfo;
+        }
         // Decode new data
         (
             string memory _bankAccount,
@@ -1205,7 +1329,15 @@ contract BranchManagement is
             taxCode: _taxCode,
             wallet: _wallet
         });
-        
+        // Record history
+        if (address(historyTrackingIMP) != address(0)) {
+            address historyTrack = mBranchIdToHistoryTrack[mainBranchId];
+                IHistoryTracking(historyTrack).recordPaymentInfoUpdate(
+                oldPayment,
+                paymentInfo,
+                string(abi.encodePacked("Payment info updated via proposal"))
+            );
+        }
         proposal.status = ProposalStatus.EXECUTED;
     }
     

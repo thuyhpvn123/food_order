@@ -243,6 +243,7 @@ interface IMANAGEMENT {
     function setActive(bool _active) external;
     function setBranchManagement(address _branchManagement) external;
     function setRoleForCoOwner(address _coOwner)external;
+    function setHistoryTracking(address _historyTracking) external;
 
 }
 interface IREPORT {
@@ -266,18 +267,22 @@ interface IStaffAgentStore {
 
 }
 interface IBranchManagement {
-      function createBranch(
+    function createBranch(
         uint _newBranchId,
         string memory _name,
         bool _isMain
     ) external returns (uint256) ;
-    function initialize(address _agent) external;
+    function initialize(
+        address _agent,
+        address _historyTrackingIMP,
+        address _freeGasSc
+    )external; 
     function updateBranch(
         uint256 branchId,
         string memory _name
     ) external ;
     function deactivateBranch(uint256 branchId) external;
-     function AddAndUpdateManager(
+    function AddAndUpdateManager(
         address _wallet,
         string memory _name,
         string memory _phone,
@@ -292,5 +297,6 @@ interface IBranchManagement {
     function setMainOwner(address _agent) external;
     function setStaffAgentStore(address _staffAgentSC)external;
     function setIqrFactorySC(address _iqrFactorySc) external ;
+    function getMainBranchId()external view returns(uint);
 }
 

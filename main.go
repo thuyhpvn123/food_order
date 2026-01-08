@@ -27,6 +27,8 @@ solc --bin --abi contracts/order_v2.sol -o output_order_v2/   --base-path .   --
 solc --bin --abi contracts/branchManager1.sol -o output_branchManager1/   --base-path .   --include-path node_modules --via-ir --overwrite
 solc --bin --abi contracts/order_new.sol -o output_order_new/   --base-path .   --include-path node_modules --via-ir --overwrite
 solc --bin --abi contracts/staffMatch.sol -o output_staffMatch/   --base-path .   --include-path node_modules --via-ir --overwrite
+solc --bin --abi contracts/historyTracking.sol -o output_historyTracking/   --base-path .   --include-path node_modules --via-ir --overwrite
+solc --bin --abi contracts/freegas.sol -o output_freegas/   --base-path .   --include-path node_modules --via-ir --overwrite
 
 ***/
 func main() {

@@ -100,8 +100,8 @@ contract RestaurantOrder is
 
     // NEW: Events cho staff management
     event OrderAcknowledged(bytes32 indexed orderId, address indexed staff, uint timestamp);
-    event OrderTransferRequested(bytes32 indexed orderId, address indexed fromStaff, address[] toStaffs, string reason, uint256 requestId);
-    event OrderTransferAccepted(bytes32 indexed orderId, address indexed fromStaff, address indexed toStaff, uint256 requestId);
+    event OrderTransferRequested(bytes32 indexed orderId, address indexed fromStaff,string nameTransferer, address[] toStaffs, string reason, uint256 requestId);
+    event OrderTransferAccepted(bytes32 indexed orderId, address indexed fromStaff, address indexed toStaff,string nameTransfer, uint256 requestId);
     event OrderTransferDeclined(bytes32 indexed orderId, address indexed toStaff, uint256 requestId);
     event OrderTransferCancelled(bytes32 indexed orderId, address indexed fromStaff, uint256 requestId);
     event OrderNotificationSent(bytes32 indexed orderId, uint table, address[] recipients);
@@ -218,9 +218,9 @@ contract RestaurantOrder is
                 
                 // Ghi lịch sử
                 if (_status == ORDER_STATUS.CONFIRMED) {
-                    _addOrderHistory(orderId, HistoryAction.ORDER_CONFIRMED, msg.sender, "Don hang da duoc xac nhan", address(0));
+                    _addOrderHistory(orderId, HistoryAction.ORDER_CONFIRMED, msg.sender, unicode"Đơn hàng đã được xác nhận", address(0));
                 } else if (_status == ORDER_STATUS.FINISHED) {
-                    _addOrderHistory(orderId, HistoryAction.ORDER_FINISHED, msg.sender, "Don hang hoan thanh", address(0));
+                    _addOrderHistory(orderId, HistoryAction.ORDER_FINISHED, msg.sender, unicode"Đơn hàng hoàn thành", address(0));
                 }
                 
                 break;
@@ -235,7 +235,9 @@ contract RestaurantOrder is
                 break;
             }
         }
-        acknowledgeOrder(orderId);
+        if(_status == ORDER_STATUS.CONFIRMED){
+            acknowledgeOrder(orderId);
+        }       
         emit OrderConfirmed(table, orderId);
     }
 
@@ -254,7 +256,6 @@ contract RestaurantOrder is
         
         // Thêm vào danh sách order đang xử lý của staff
         staffActiveOrders[msg.sender].push(orderId);
-        
         // Gửi thông báo dismiss cho tất cả staff khác
         address[] memory allStaff = MANAGEMENT.GetActiveStaffAddressesByDate(block.timestamp);
         if( allStaff.length >0){
@@ -263,7 +264,7 @@ contract RestaurantOrder is
         }
         
         // Ghi lịch sử
-        _addOrderHistory(orderId, HistoryAction.ORDER_ACKNOWLEDGED, msg.sender, "Nhan vien A da xac nhan don", address(0));
+        _addOrderHistory(orderId, HistoryAction.ORDER_ACKNOWLEDGED, msg.sender, unicode"Nhân viên đã xác nhận đơn", address(0));
         
         emit OrderAcknowledged(orderId, msg.sender, block.timestamp);
         return true;
@@ -314,12 +315,12 @@ contract RestaurantOrder is
             //     noti.AddNoti(param, toStaffs[i]);
             // }
         }
-        
+        Staff memory staff = MANAGEMENT.GetStaffInfo(msg.sender);
         // Ghi lịch sử
-        string memory details = string(abi.encodePacked("Da chuyen don cho Nhan vien B - ", reason));
+        string memory details = string(abi.encodePacked(unicode"Đã chuyển đơn - ", reason));
+        emit OrderTransferRequested(orderId, msg.sender,staff.name, toStaffs, reason, requestId);
         _addOrderHistory(orderId, HistoryAction.TRANSFER_REQUESTED, msg.sender, details, toStaffs[0]);
         
-        emit OrderTransferRequested(orderId, msg.sender, toStaffs, reason, requestId);
         return requestId;
     }
 
@@ -382,9 +383,11 @@ contract RestaurantOrder is
         // }
         
         // Ghi lịch sử
-        _addOrderHistory(orderId, HistoryAction.TRANSFER_ACCEPTED, msg.sender, "Da nhan don chuyen giao", fromStaff);
-        
-        emit OrderTransferAccepted(orderId, fromStaff, msg.sender, requestId);
+        Staff memory staff = MANAGEMENT.GetStaffInfo(msg.sender);
+        emit OrderTransferAccepted(orderId, fromStaff, msg.sender,staff.name, requestId);
+
+        _addOrderHistory(orderId, HistoryAction.TRANSFER_ACCEPTED, msg.sender, unicode"Đã nhận đơn chuyển giao", fromStaff);
+
         return true;
     }
 
@@ -417,7 +420,7 @@ contract RestaurantOrder is
                 // }
                 
                 // Ghi lịch sử
-                string memory details = "Tu choi nhan don";
+                string memory details = unicode"Từ chối nhận đơn";
                 _addOrderHistory(orderId, HistoryAction.TRANSFER_DECLINED, msg.sender, details, requests[i].fromStaff);
                 
                 emit OrderTransferDeclined(orderId, msg.sender, requestId);
@@ -428,7 +431,119 @@ contract RestaurantOrder is
         require(found, "No valid pending request found");
         return true;
     }
+    struct StaffDeclinedInfo {
+        address staffAddress;
+        string staffName;
+        uint256 declinedAt;
+        uint256 requestId;
+        string linkImgPortrait;
+    }
 
+    // Lấy danh sách tất cả staff đã decline transfer của 1 order
+    function getDeclinedStaffByOrder(bytes32 orderId) 
+        external 
+        view 
+        returns (StaffDeclinedInfo[] memory) 
+    {
+        TransferRequest[] memory requests = pendingTransfers[orderId];
+        
+        // Đếm số staff declined
+        uint declinedCount = 0;
+        for (uint i = 0; i < requests.length; i++) {
+            if (requests[i].status == TransferStatus.DECLINED) {
+                declinedCount++;
+            }
+        }
+        
+        // Tạo mảng kết quả
+        StaffDeclinedInfo[] memory result = new StaffDeclinedInfo[](declinedCount);
+        uint index = 0;
+        
+        for (uint i = 0; i < requests.length; i++) {
+            if (requests[i].status == TransferStatus.DECLINED) {
+                Staff memory staff = MANAGEMENT.GetStaffInfo(requests[i].toStaff);
+                result[index] = StaffDeclinedInfo({
+                    staffAddress: requests[i].toStaff,
+                    staffName: staff.name,
+                    declinedAt: requests[i].timestamp,
+                    requestId: requests[i].requestId,
+                    linkImgPortrait: staff.linkImgPortrait
+                });
+                index++;
+            }
+        }
+        
+        return result;
+    }
+    struct TransferOverview {
+        StaffDeclinedInfo[] acceptedStaff;   // Danh sách đã nhận (thường chỉ 1 người)
+        StaffDeclinedInfo[] declinedStaff;   // Danh sách đã từ chối
+        StaffDeclinedInfo[] pendingStaff;    // Danh sách đang chờ
+        StaffDeclinedInfo[] cancelledStaff;  // Danh sách bị hủy (do người khác accept trước)
+    }
+
+    // HÀM CHÍNH - Lấy tổng quan đầy đủ về transfer của 1 order
+    function getTransferOverview(bytes32 orderId) 
+        external 
+        view 
+        returns (TransferOverview memory) 
+    {
+        TransferRequest[] memory requests = pendingTransfers[orderId];
+        
+        // Đếm số lượng từng loại
+        uint acceptedCount = 0;
+        uint declinedCount = 0;
+        uint pendingCount = 0;
+        uint cancelledCount = 0;
+        
+        for (uint i = 0; i < requests.length; i++) {
+            if (requests[i].status == TransferStatus.ACCEPTED) acceptedCount++;
+            else if (requests[i].status == TransferStatus.DECLINED) declinedCount++;
+            else if (requests[i].status == TransferStatus.PENDING) pendingCount++;
+            else if (requests[i].status == TransferStatus.CANCELLED) cancelledCount++;
+        }
+        
+        // Tạo các mảng
+        StaffDeclinedInfo[] memory accepted = new StaffDeclinedInfo[](acceptedCount);
+        StaffDeclinedInfo[] memory declined = new StaffDeclinedInfo[](declinedCount);
+        StaffDeclinedInfo[] memory pending = new StaffDeclinedInfo[](pendingCount);
+        StaffDeclinedInfo[] memory cancelled = new StaffDeclinedInfo[](cancelledCount);
+        
+        // Fill data
+        uint aIndex = 0;
+        uint dIndex = 0;
+        uint pIndex = 0;
+        uint cIndex = 0;
+        
+        for (uint i = 0; i < requests.length; i++) {
+            Staff memory staff = MANAGEMENT.GetStaffInfo(requests[i].toStaff);
+            
+            StaffDeclinedInfo memory info = StaffDeclinedInfo({
+                staffAddress: requests[i].toStaff,
+                staffName: staff.name,
+                declinedAt: requests[i].timestamp,
+                requestId: requests[i].requestId,
+                linkImgPortrait: staff.linkImgPortrait
+            });
+            
+            if (requests[i].status == TransferStatus.ACCEPTED) {
+                accepted[aIndex++] = info;
+            } else if (requests[i].status == TransferStatus.DECLINED) {
+                declined[dIndex++] = info;
+            } else if (requests[i].status == TransferStatus.PENDING) {
+                pending[pIndex++] = info;
+            } else if (requests[i].status == TransferStatus.CANCELLED) {
+                cancelled[cIndex++] = info;
+            }
+        }
+        
+        return TransferOverview({
+            acceptedStaff: accepted,
+            declinedStaff: declined,
+            pendingStaff: pending,
+            cancelledStaff: cancelled
+        });
+    }
     // NEW: Cancel transfer request (staff gửi request có thể hủy)
     function cancelTransferRequest(bytes32 orderId, uint256 requestId) external onlyStaff returns (bool) {
         TransferRequest[] storage requests = pendingTransfers[orderId];
@@ -492,7 +607,7 @@ contract RestaurantOrder is
         
         // Ghi lịch sử
         // string memory details = string(abi.encodePacked("Da huy don #", orderId));
-        _addOrderHistory(orderId, HistoryAction.ORDER_CANCELLED, msg.sender, "Da huy don", address(0));
+        _addOrderHistory(orderId, HistoryAction.ORDER_CANCELLED, msg.sender, unicode"Đã hủy đơn", address(0));
         
         emit OrderCancelled(orderId, msg.sender);
         return true;
@@ -589,9 +704,10 @@ function _addOrderHistory(
         _createOrUpdatePayment(table, order.id, totalPrice);
         allOrders.push(order);
         mTableToIdPayment[table] = mTableToPayment[table].id;
+        emit OrderMade(table, orderId, dishCodes.length);
 
         // Ghi lịch sử tạo order
-        _addOrderHistory(orderId, HistoryAction.ORDER_CREATED, msg.sender, "Don hang moi duoc tao", address(0));
+        _addOrderHistory(orderId, HistoryAction.ORDER_CREATED, msg.sender, unicode"Đơn hàng mới được tạo", address(0));
 
         // NEW: Gửi thông báo cho TẤT CẢ staff
         address[] memory allStaff = MANAGEMENT.GetActiveStaffAddressesByDate(block.timestamp);
@@ -615,7 +731,6 @@ function _addOrderHistory(
         //     emit OrderNotificationSent(orderId, table, allStaff);
         // }
 
-        emit OrderMade(table, orderId, dishCodes.length);
         return orderId;
     }
 
@@ -835,7 +950,7 @@ function _addOrderHistory(
         // Ghi lịch sử thanh toán
         orderIds = payment.orderIds;
         for (uint i = 0; i < orderIds.length; i++) {
-            _addOrderHistory(orderIds[i], HistoryAction.PAYMENT_COMPLETED, msg.sender, "Thanh toan thanh cong", address(0));
+            _addOrderHistory(orderIds[i], HistoryAction.PAYMENT_COMPLETED, msg.sender, unicode"Thanh toán thành công", address(0));
         }
         
         emit PaymentConfirmed(paymentId, msg.sender);
@@ -1341,9 +1456,43 @@ function _addOrderHistory(
         return result;
     }
 
-    function getStaffActiveOrders(address staff) external view returns (bytes32[] memory) {
+    function getStaffActiveOrders(address staff) external view returns (bytes32[] memory) {        
         return staffActiveOrders[staff];
     }
+    function GetOrdersAcknowlegdePaginationByStatus(
+        address staff,
+        uint offset, 
+        uint limit,
+        ORDER_STATUS _status
+    ) external view returns(Order[] memory orders, uint totalCount) {
+        totalCount = 0;
+        for(uint i; i < staffActiveOrders[staff].length; i++) {
+            if(mOrderIdToOrder[staffActiveOrders[staff][i]].status == _status) {
+                totalCount++;
+            }
+        }
+        if(offset >= totalCount) {
+            return (new Order[](0), totalCount);
+        }
+        uint remaining = totalCount - offset;
+        uint count = remaining < limit ? remaining : limit;
+        orders = new Order[](count);
+        uint foundCount = 0;
+        uint skipped = 0;
+        for (uint i = staffActiveOrders[staff].length; i > 0 && foundCount < count; i--) {
+            uint index = i - 1;
+            if(mOrderIdToOrder[staffActiveOrders[staff][index]].status == _status) {
+                if(skipped < offset) {
+                    skipped++;
+                    continue;
+                }
+                orders[foundCount] = mOrderIdToOrder[staffActiveOrders[staff][index]];
+                foundCount++;
+            }
+        }
+        return (orders, totalCount);
+    }
+
 
     function getStaffActiveOrdersCount(address staff) external view returns (uint) {
         return staffActiveOrders[staff].length;

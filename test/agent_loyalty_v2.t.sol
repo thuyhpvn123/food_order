@@ -17,6 +17,8 @@ import "./res_old.t.sol";
 import "../contracts/staffMatch.sol";
 import "../contracts/interfaces/IManagement.sol";
 import "../contracts/branchManager1.sol";
+import "../contracts/historyTracking.sol";
+import "../contracts/freegas.sol";
 
 // import {BranchInfoInput} from "../contracts/interfaces/IAgent.sol";
 /**
@@ -47,12 +49,15 @@ contract AgentManagementIntegrationTest is RestaurantTest {
     
     StaffAgentStore public staffAgentStoreImplementation;
     StaffAgentStore public staffAgentStore;
+    HistoryTracking public historyTrackingIMP;
     // Test accounts
     BranchManagement public branchManagementImplementation;
-    
+    FreeGasStorage   public freeGasImplementation;
+    FreeGasStorage   public freeGasSc;
     Management public management;
     RestaurantLoyaltySystem public Points;
     BranchManagement public branchManager;
+    
     // address public customer1;
     // address public customer2;
     string public domain="domain";
@@ -126,7 +131,17 @@ contract AgentManagementIntegrationTest is RestaurantTest {
         
         // 8. Deploy BranchManagement
         branchManagementImplementation = new BranchManagement();
+        //9. Deploy historyTrackingIMP
+        historyTrackingIMP = new HistoryTracking();
 
+        //10 Deploy freeGasSc
+        freeGasImplementation = new FreeGasStorage();
+        ERC1967Proxy freeGasScProxy = new ERC1967Proxy(
+            address(freeGasImplementation),
+            abi.encodeWithSelector(RestaurantReporting.initialize.selector,
+            address(iqrFactory))
+        );
+        freeGasSc = FreeGasStorage(address(freeGasScProxy));
         // Setup admin
         enhanced.setAdmin(superAdmin);
                
@@ -146,7 +161,9 @@ contract AgentManagementIntegrationTest is RestaurantTest {
             0x603dbFC668521aB143Ee1018e4D80b13FDDedfBd,
             address(revenueManager),
             address(staffAgentStore),
-            address(branchManagementImplementation)
+            address(branchManagementImplementation),
+            address(historyTrackingIMP),
+            address(freeGasSc)
         );
         loyaltyFactory.setPointsImp(address(POINTS_IMP));
         loyaltyFactory.setEnhancedAgent(address(enhanced));
@@ -154,6 +171,10 @@ contract AgentManagementIntegrationTest is RestaurantTest {
 
         staffAgentStore.setEnhancedAgent(address(enhanced));
         staffAgentStore.setIqrFactory(address(iqrFactory));
+
+        freeGasSc.registerSCAdmin(address(iqrFactory),true);
+        freeGasSc.registerSCAdmin(address(loyaltyFactory),true);
+        freeGasSc.registerSCAdmin(address(enhanced),true);
         vm.stopPrank();
         
         console.log("=== Setup Complete ===");
@@ -1559,7 +1580,7 @@ contract AgentManagementIntegrationTest is RestaurantTest {
             1855995908,
             "createdAt",
             false,
-            1,
+            2,
             20
         ));
         console.log("enhanced getAgentsInfoPaginated:");
@@ -1597,15 +1618,17 @@ contract AgentManagementIntegrationTest is RestaurantTest {
         bytesCodeCall = abi.encodeCall(
             iqrFactory.setIQRSC,
             (
-                0x90de590a7075B1719Ed0315E8c34AC545a8e450A,
-                0x57A0ef7105457c2C82d6Ce9645b9C2A9b9a39810,
-                0x6C7A004B874e84bf337D6eBA9FB3473C332A98A0,
-                0xDF125280f89aB52892CaF45b0e9A9B1B4794872F,
+                0x68d8e04b9d2e3e3B80743b2b451f0Ad05fcbab50,
+                0x16Cd2D2E63e40810D1908D756838EE9ED32339cf,
+                0xf16eBa3FcB56926c5bc9dE91A0E0bd611E4BCCde,
+                0x5d05DbdE125824dD73cAe3Dd0f3908CB32B587F2,
                 0x10F4A365ff344b3Af382aBdB507c868F1c22f592,
                 0x603dbFC668521aB143Ee1018e4D80b13FDDedfBd,
-                0x30D4C058f4f3C4C2F7fB7029fc8e62ed11D37D11,
-                0xEcb2bC7341824f535262ade6E66AAA5e1539B8Eb,
-                0x8ad539690c73f06180889046feA897e323378f58
+                0x1510151015101510151015101510151015101510,
+                0x1510151015101510151015101510151015101510,
+                0x5419997F895de4BF3B05080202122c09d9FE5151,
+                0x1510151015101510151015101510151015101510,
+                0x1510151015101510151015101510151015101510
             )
         );
         console.log("iqrFactory: setIQRSC");

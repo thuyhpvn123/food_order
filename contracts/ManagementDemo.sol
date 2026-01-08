@@ -11,6 +11,7 @@ import "./interfaces/ITimeKeeping.sol";
 import "./interfaces/IAgent.sol";
 import "./interfaces/IPoint.sol";
 // import "forge-std/console.sol";
+import "./interfaces/IHistoryTracking.sol";
 
 contract Management is    
    
@@ -118,6 +119,8 @@ contract Management is
     address public branchManagement;
     ChartTotalOrder[] public totalOrderDays;
     uint public branchId;
+    IHistoryTracking public historyTracking;
+
     uint256[49] private __gap;
 
     constructor() {
@@ -172,6 +175,11 @@ contract Management is
             return true;
         }
     } 
+    function setHistoryTracking(address _historyTracking) external  {
+        require(_historyTracking != address(0), "Invalid address");
+        historyTracking = IHistoryTracking(_historyTracking);
+    }
+
     function _authorizeUpgrade(address newImplementation) internal override {}
 
     function initialize() public initializer {
@@ -284,6 +292,13 @@ contract Management is
             staffAgentStore.setAgent(staff.wallet,agent,branchId);
 
         }
+        if (address(historyTracking) != address(0)) {
+            historyTracking.recordStaffCreate(
+                staff.wallet,
+                mAddToStaff[staff.wallet],
+                "Create Staff"
+            );
+        }
     }
     // Hàm helper để validate roles của staff
     function _validateStaffRoles(string memory _position, STAFF_ROLE[] memory _staffRoles) 
@@ -333,6 +348,13 @@ contract Management is
     function removeStaff(address wallet) external isActive onlyAdminAndRole(STAFF_ROLE.STAFF_MANAGE) {
     require(mAddToStaff[wallet].wallet != address(0), "Staff not found");
     require(mAddToStaff[wallet].active, "Staff already inactive");
+    if (address(historyTracking) != address(0)) {
+        historyTracking.recordStaffDelete(
+            wallet,
+            mAddToStaff[wallet],
+            "Staff removed"
+        );
+    }
     
     // Lưu lại roles trước khi xóa
     STAFF_ROLE[] memory staffRoles = mAddToStaff[wallet].roles;
@@ -404,6 +426,13 @@ contract Management is
             _markStaffActiveForDate(_wallet, block.timestamp);
             staffLastActiveDate[_wallet] = block.timestamp;
         }
+        if (address(historyTracking) != address(0)) {
+        historyTracking.recordStaffUpdate(
+            _wallet,
+            mAddToStaff[_wallet],
+            "Staff info updated"
+        );
+    }
         return true;
     }
     // Internal function to mark staff active for a specific date
@@ -423,7 +452,11 @@ contract Management is
             isMonthlyActive[monthKey][staffWallet] = true;
         }
     }
-    function GetStaffInfo(address _wallet)external view onlyAdminAndRole(STAFF_ROLE.STAFF_MANAGE) isActive returns(Staff memory){
+    function GetStaffInfo(address _wallet)external view isActive returns(Staff memory){
+        require(
+            checkRole(STAFF_ROLE.STAFF_MANAGE,msg.sender) || msg.sender == restaurantOrder,
+            "Access denied: missing role"
+        );
         return mAddToStaff[_wallet];
     }
     function GetStaff()external view returns(Staff memory){
@@ -741,6 +774,13 @@ contract Management is
         tables.push(table);
         mAreaToTable[_areaId].push(table);
         mTableToAreaId[_number] = _areaId;
+        if (address(historyTracking) != address(0)) {
+            historyTracking.recordTableCreate(
+                _number,
+                mNumberToTable[_number],
+                "create table"
+            );
+        }
     }
     function getTablesByArea(uint _areaId) external view returns(Table[] memory){
         return mAreaToTable[_areaId];
@@ -771,6 +811,13 @@ contract Management is
     }
 
     function removeTable(uint _number)external onlyAdminAndRole(STAFF_ROLE.TABLE_MANAGE) isActive {
+        if (address(historyTracking) != address(0)) {
+            historyTracking.recordTableDelete(
+                _number,
+                mNumberToTable[_number],
+                "Table removed"
+            );
+        }
         for(uint i;i<tables.length;i++){
             if(tables[i].number == _number){
                 tables[i] = tables[tables.length-1];
@@ -835,6 +882,13 @@ contract Management is
             }
 
         }
+        if (address(historyTracking) != address(0)) {
+            historyTracking.recordTableUpdate(
+                _number,
+                mNumberToTable[_number],
+                "Table updated"
+            );
+        }
         return true;
     }
     function GetAllTables()external view returns(Table[] memory){
@@ -889,8 +943,23 @@ contract Management is
         cat.icon = category.icon;
         categories.push(cat);
         isCodeExist[cat.code] = true;
+        if (address(historyTracking) != address(0)) {
+        historyTracking.recordCategoryCreate(
+            category.code,
+            mCodeToCat[category.code],
+            "Create Category"
+        );
+    }
     }
     function RemoveCategory(string memory _code)external onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE) isActive {
+        if (address(historyTracking) != address(0)) {
+            historyTracking.recordCategoryDelete(
+                _code,
+                mCodeToCat[_code],
+                "Category removed"
+            );
+        }
+
         for(uint i;i<categories.length;i++){
             if(keccak256(abi.encodePacked(categories[i].code ))== keccak256(abi.encodePacked(_code))){
                 categories[i] = categories[categories.length-1];
@@ -922,6 +991,13 @@ contract Management is
             if(keccak256(abi.encodePacked(categories[i].code ))== keccak256(abi.encodePacked(_code))){
                 categories[i] = category;
             }
+        }
+        if (address(historyTracking) != address(0)) {
+            historyTracking.recordCategoryUpdate(
+                _code,
+                mCodeToCat[_code],
+                "Category updated"
+            );
         }
         return true;
     }
@@ -1055,7 +1131,25 @@ contract Management is
         if(optionIds.length > 0){
             _batchChooseOption(dish.code,optionIds);
         }
+         if (address(historyTracking) != address(0)) {
+        // Prepare data
+        Variant[] memory variants = new Variant[](_variants.length);
+        Attribute[][] memory attributes = new Attribute[][](_variants.length);
         
+        for (uint i = 0; i < _variants.length; i++) {
+            bytes32 variantHash = mDishVariant[dish.code][i];
+            variants[i] = mVariant[dish.code][variantHash];
+            attributes[i] = mVariantAttributes[dish.code][variantHash];
+        }
+        
+        historyTracking.recordDishCreate(
+            dish.code,
+            mCodeToDish[dish.code],
+            variants,
+            attributes,
+            "Create new dish"
+        );
+    }
     }
     // Purpose: This function prevent 1 product have same attributes
     // so it maybe like: Shirt, Color : Red, Size : M
@@ -2128,6 +2222,25 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
                 }
             }
         }
+        if (address(historyTracking) != address(0)) {
+            Variant[] memory variants = new Variant[](mDishVariant[_codeDish].length);
+            Attribute[][] memory attributes = new Attribute[][](mDishVariant[_codeDish].length);
+            
+            for (uint i = 0; i < mDishVariant[_codeDish].length; i++) {
+                bytes32 variantHash = mDishVariant[_codeDish][i];
+                variants[i] = mVariant[_codeDish][variantHash];
+                attributes[i] = mVariantAttributes[_codeDish][variantHash];
+            }
+            
+            historyTracking.recordDishUpdate(
+                _codeDish,
+                mCodeToDish[_codeDish],
+                variants,
+                attributes,
+                "Updated dish information"
+            );
+        }
+    
         return true;
     }
     function RemoveDish(
@@ -2141,6 +2254,25 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
             bytes(mCodeToCat[_codeCategory].code).length > 0,
             "Category code does not exist"
         );
+        //Record BEFORE deleting (để lưu snapshot cuối cùng)
+        if (address(historyTracking) != address(0)) {
+            Variant[] memory variants = new Variant[](mDishVariant[_dishCode].length);
+            Attribute[][] memory attributes = new Attribute[][](mDishVariant[_dishCode].length);
+            
+            for (uint i = 0; i < mDishVariant[_dishCode].length; i++) {
+                bytes32 variantHash = mDishVariant[_dishCode][i];
+                variants[i] = mVariant[_dishCode][variantHash];
+                attributes[i] = mVariantAttributes[_dishCode][variantHash];
+            }
+            
+            historyTracking.recordDishDelete(
+                _dishCode,
+                mCodeToDish[_dishCode],
+                variants,
+                attributes,
+                "Dish removed from menu"
+            );
+        }
 
         // Xoá dish khỏi danh sách trong category
         Dish[] storage dishes = mCodeCatToDishes[_codeCategory];
@@ -2293,8 +2425,22 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
             textDes: _textDes
         });
         discounts.push(mCodeToDiscount[_code]);
+        if (address(historyTracking) != address(0)) {
+        historyTracking.recordDiscountCreate(
+            _code,
+            mCodeToDiscount[_code],
+            "Create Discount"
+        );
+    }
     }
     function RemoveDiscount(string memory _code)external onlyAdminAndRole(STAFF_ROLE.MENU_MANAGE){
+        if (address(historyTracking) != address(0)) {
+            historyTracking.recordDiscountDelete(
+                _code,
+                mCodeToDiscount[_code],
+                "Discount removed"
+            );
+        }
         for(uint i;i<discounts.length;i++){
             if(keccak256(abi.encodePacked(discounts[i].code ))== keccak256(abi.encodePacked(_code))){
                 discounts[i] = discounts[discounts.length-1];
@@ -2360,6 +2506,13 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
             if(keccak256(abi.encodePacked(discounts[i].code ))== keccak256(abi.encodePacked(_code))){
                 discounts[i] = discount;
             }
+        }
+        if (address(historyTracking) != address(0)) {
+            historyTracking.recordDiscountUpdate(
+                _code,
+                mCodeToDiscount[_code],
+                "Discount updated"
+            );
         }
     }
     // // Hàm để member redeem voucher bằng điểm

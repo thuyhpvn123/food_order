@@ -189,9 +189,13 @@ contract AgentManagement is
                     branchInfo.name,
                     branchInfo.isMain
                 );
+                if(branchInfo.isMain){
+                    IQRFactory(iqrFactory).addManagerMainBranch(branchMgmt,_agent,branchIds);
+                }
             }
             emit PermissionGranted(_agent, 0, block.timestamp);
         }
+        
     }
     /**
      * @dev Grant Loyalty permission by deploying contract

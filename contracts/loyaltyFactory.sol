@@ -9,6 +9,7 @@ import "./interfaces/IAgent.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "./interfaces/IPoint.sol";
 import {RestaurantLoyaltySystem} from "./agentLoyalty.sol";
+import "./interfaces/IFreeGas.sol";
 
 contract LoyaltyFactory is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     
@@ -18,11 +19,12 @@ contract LoyaltyFactory is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     address[] public deployedContracts;
     address public enhancedAgent;
     address public POINTS_IMP;
+    address public freeGasSc;
     uint256[50] private __gap;
     
     event AgentLoyaltyCreated(address indexed agent, address indexed contractAddr, uint256 timestamp);
     event ContractUpgraded(string oldVersion, string newVersion, uint256 timestamp);
-    
+
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
@@ -45,7 +47,9 @@ contract LoyaltyFactory is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     function setPointsImp(address _pointsImp) external onlyOwner {
         POINTS_IMP = _pointsImp;
     }
-    
+    function setFreeGasSc(address _freeGasSc) external onlyOwner {
+        freeGasSc = _freeGasSc;
+    }
     function createAgentLoyalty(address _agent,uint _branchId) external onlyEnhanceSC returns (address) {
         require(_agent != address(0), "Invalid agent");
         require(agentLoyaltyContracts[_agent][_branchId] == address(0), "Contract already exists");
@@ -65,6 +69,12 @@ contract LoyaltyFactory is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         deployedContracts.push(contractAddr);
         
         emit AgentLoyaltyCreated(_agent, contractAddr, block.timestamp);
+        address[] memory iqrAdds= new address[](1);
+        iqrAdds[0] = contractAddr;
+        if(freeGasSc != address(0)){
+            IFreeGas(freeGasSc).AddSC(_agent,iqrAdds);
+        }
+
         return contractAddr;
     }
     //admin gọi ngay sau gọi createAgent nếu có dùng loyalty

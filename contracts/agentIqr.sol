@@ -27,7 +27,6 @@ contract AgentIQR is OwnableUpgradeable {
     event OrderCompleted(uint256 indexed orderId, uint256 timestamp);
     event OrderCancelled(uint256 indexed orderId, uint256 timestamp);
     event ContractDeactivated(uint256 timestamp);
-    
     constructor(
         address _agent,
         address _enhancedAgent,

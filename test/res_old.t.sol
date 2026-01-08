@@ -747,6 +747,7 @@ contract RestaurantTest is Test {
         notes[1] = "";
         notes[2] = "medium";
         //
+        // (Order[] memory ordersArr, uint totalCount4) = ORDER.GetOrdersAcknowlegdePaginationByStatus(staff1,0,5,ORDER_STATUS.CONFIRMED);
         DishInfo memory dishInfo = MANAGEMENT.getDishInfo("dish1_code");       
         bytes32[] memory variantIDs = new bytes32[](3);
         variantIDs[0] = dishInfo.variants[0].variantID;
@@ -962,6 +963,9 @@ contract RestaurantTest is Test {
         vm.startPrank(staff1);
         ORDER.BatchUpdateCourseStatus(1,orderId1T1,COURSE_STATUS.PREPARING);
         ORDER.ConfirmOrder(orderId1T1,ORDER_STATUS.CONFIRMED);
+        (Order[] memory orders, uint totalCount3) = ORDER.GetOrdersAcknowlegdePaginationByStatus(staff1,0,5,ORDER_STATUS.CONFIRMED);
+        console.log("totalCount3:",totalCount3);
+
         ORDER.confirmPayment(1,payment.id,"paid");
         // Payment memory payment = ORDER.GetPaymentById(idPayment);
         // assertEq(payment.staffComfirm,staff1);
@@ -1017,7 +1021,6 @@ contract RestaurantTest is Test {
         console.log("dishReport.ranking:",dishReport.ranking);
         (NewDish[] memory newDishes, uint totalCount1) = MANAGEMENT.GetNewDishesWithLimit(0,10);
         console.log("totalCount:",totalCount1);
-
     }
     function hashAttributes(
         Attribute[] memory attrs
@@ -1047,6 +1050,33 @@ contract RestaurantTest is Test {
     console.log(
         "-----------------------------------------------------------------------------"
     );  
+    //ORDER.executeOrder(1,discountCode,tip,paymentAmount,txID,false);
+     bytesCodeCall = abi.encodeCall(
+    ORDER.executeOrder,
+        (
+            1,"",0,111111111111,"",false
+        )
+    );
+    console.log("ORDER executeOrder:");
+    console.logBytes(bytesCodeCall);
+    console.log(
+        "-----------------------------------------------------------------------------"
+    );  
+    //ORDER.GetOrdersAcknowlegdePaginationByStatus(staff1,0,5,ORDER_STATUS.CONFIRMED)
+    bytesCodeCall = abi.encodeCall(
+    ORDER.GetOrdersAcknowlegdePaginationByStatus,
+        (
+            0x28123db3931C5c9A26c5A1A6F27f3C392ABA077D,
+            0,
+            5,
+            ORDER_STATUS.CONFIRMED
+        )
+    );
+    console.log("Order GetOrdersAcknowlegdePaginationByStatus:");
+    console.logBytes(bytesCodeCall);
+    console.log(
+        "-----------------------------------------------------------------------------"
+    ); 
     //orderPrimaryStaff
     bytesCodeCall = abi.encodeCall(
     ORDER.orderPrimaryStaff,

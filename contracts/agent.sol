@@ -10,7 +10,10 @@ import "./interfaces/IAgent.sol";
 import {AgentIQR} from "./agentIqr.sol";
 import {RestaurantLoyaltySystem} from "./agentLoyalty.sol";
 import {IQRFactory} from "./iqrFactory.sol";
-// import "forge-std/console.sol";
+import {MeosFactory} from "./meosFactory.sol";
+// import {BMFactory} from "./bmFactory.sol";
+
+import "forge-std/console.sol";
 contract AgentManagement is 
     Initializable,
     OwnableUpgradeable,
@@ -28,12 +31,14 @@ contract AgentManagement is
     // Contract addresses
     address public iqrFactory;
     address public loyaltyFactory;
+    address public meosFactory;
     address public revenueManager;
     address public mtdToken;
-    
+    address public bmFactory;
     // Mappings
     mapping(address => Agent) public agents;
     mapping(address =>mapping(uint => address)) public agentIQRContracts;
+    mapping(address =>mapping(uint => address)) public agentMEOSContracts;
     mapping(address =>mapping(uint => address)) public agentLoyaltyContracts;
     mapping(address => address) public agentBranchManagement; // agent => BranchManagement contract
     mapping(address => mapping(uint => MeOSLicense)) public meosLicenses;
@@ -128,13 +133,13 @@ contract AgentManagement is
     function setFactoryContracts(
         address _iqrFactory,
         address _loyaltyFactory,
-        address _revenueManager
-        // address _mtdToken
+        address _revenueManager,
+        address _bmFactory
     ) external onlySuperAdmin {
         iqrFactory = _iqrFactory;
         loyaltyFactory = _loyaltyFactory;
         revenueManager = _revenueManager;
-        // mtdToken = _mtdToken;
+        bmFactory = _bmFactory;
     }
     
     function getSubLocationCount(address _agent) public view returns (uint256) {
@@ -144,9 +149,11 @@ contract AgentManagement is
     /**
      * @dev Grant permissions to agent
      */
-    function _grantPermissions(address _agent, bool[3] memory _permissions, uint[] memory branchIds) internal {
+    function _grantPermissions(address _agent, bool[4] memory _permissions, uint[] memory branchIds) internal {
+        address branchMgmt = createBranchManagerSC(_agent,branchIds);
+
         if (_permissions[0]) {
-            _grantIQRPermission(_agent,branchIds);
+            _grantIQRPermission(_agent,branchIds,branchMgmt);
         }
         
         // Loyalty Permission  
@@ -157,19 +164,39 @@ contract AgentManagement is
         
         // MeOS Permission
         if (_permissions[2]) {
-            _grantMeOSPermission(_agent,branchIds);
+            _grantMeOSPermission(_agent,branchIds,branchMgmt);
+        }
+         // MeOS Permission
+        if (_permissions[3]) {
+            _grantRobotPermission(_agent,branchIds);
         }
     }
-    function _grantIQRPermission(address _agent, uint[] memory branchIds) internal {
+    function createBranchManagerSC(address _agent, uint[] memory branchIds) internal returns(address){
+        address branchMgmt = agentBranchManagement[_agent];
+        // Tạo BranchManagement contract nếu chưa có
+        if (branchMgmt == address(0)) {
+            branchMgmt = IBMFactory(bmFactory).createBranchManagement(_agent);
+            agentBranchManagement[_agent]=branchMgmt;
+        }
+        // for(uint i; i < branchIds.length; i++){
+        //     uint branchIdCount = branchIds[i];
+        //     // Đăng ký branch vào BranchManagement
+        //     BranchInfo memory branchInfo = mBranchIdToBranch[branchIdCount];
+        //     IBranchManagement(branchMgmt).createBranch(
+        //         branchIdCount,
+        //         branchInfo.name,
+        //         branchInfo.isMain
+        //     );
+        //     if(branchInfo.isMain){
+        //         IBMFactory(bmFactory).addManagerMainBranch(branchMgmt,_agent,branchIds);
+        //     }
+        // }
+        return branchMgmt;
+    }
+    function _grantIQRPermission(address _agent, uint[] memory branchIds, address branchMgmt) internal {
         if (iqrFactory == address(0)) {
             agents[_agent].permissions[0] = false;
             return;
-        }
-         address branchMgmt = agentBranchManagement[_agent];
-        // Tạo BranchManagement contract nếu chưa có
-        if (branchMgmt == address(0)) {
-            branchMgmt = IQRFactory(iqrFactory).createBranchManagement(_agent,branchIds);
-            agentBranchManagement[_agent]=branchMgmt;
         }
         // Tạo IQR contracts cho từng branch và đăng ký vào BranchManagement
         for(uint i; i < branchIds.length; i++){
@@ -181,8 +208,7 @@ contract AgentManagement is
             } else {
                 agentIQR = IQRFactory(iqrFactory).createAgentIQR(_agent, branchIdCount);
                 agentIQRContracts[_agent][branchIdCount] = agentIQR;
-                
-                // Đăng ký branch vào BranchManagement
+                 // Đăng ký branch vào BranchManagement
                 BranchInfo memory branchInfo = mBranchIdToBranch[branchIdCount];
                 IBranchManagement(branchMgmt).createBranch(
                     branchIdCount,
@@ -190,7 +216,7 @@ contract AgentManagement is
                     branchInfo.isMain
                 );
                 if(branchInfo.isMain){
-                    IQRFactory(iqrFactory).addManagerMainBranch(branchMgmt,_agent,branchIds);
+                    IBMFactory(bmFactory).addManagerMainBranch(branchMgmt,_agent,branchIds);
                 }
             }
             emit PermissionGranted(_agent, 0, block.timestamp);
@@ -221,7 +247,7 @@ contract AgentManagement is
     /**
      * @dev Grant MeOS permission by generating license key
      */
-    function _grantMeOSPermission(address _agent, uint[] memory branchIds) internal {
+    function _grantRobotPermission(address _agent, uint[] memory branchIds) internal {
         for(uint i; i < branchIds.length; i++){
             string memory licenseKey = _generateLicenseKey(_agent,branchIds[i]);
             uint256 expiryAt = block.timestamp + (365 * 24 * 60 * 60); // 1 year
@@ -238,7 +264,30 @@ contract AgentManagement is
 
         }
     }
-    
+    function _grantMeOSPermission(address _agent, uint[] memory branchIds, address branchMgmt) internal {
+        if (meosFactory == address(0)) {
+            agents[_agent].permissions[0] = false;
+            return;
+        }
+
+        // Tạo IQR contracts cho từng branch và đăng ký vào BranchManagement
+        for(uint i; i < branchIds.length; i++){
+            uint branchIdCount = branchIds[i];
+            address agentMeos = MeosFactory(meosFactory).getAgentMEOSContract(_agent, branchIdCount);
+            
+            if(agentMeos != address(0) && agentMEOSContracts[_agent][branchIdCount] != address(0)){
+                IAgentMeos(agentMeos).reactivate();
+            } else {
+                console.log("ggggggggg:",agents[_agent].permissions[0]);
+                agentMeos = MeosFactory(meosFactory).createAgentMeos(_agent, branchIdCount);
+                agentMEOSContracts[_agent][branchIdCount] = agentMeos;
+                console.log("vvvvvvvv:",agents[_agent].permissions[0]);
+                
+            }
+            emit PermissionGranted(_agent, 0, block.timestamp);
+        }
+        
+    }
     /**
      * @dev Generate unique license key for MeOS
      */
@@ -262,10 +311,10 @@ function updateAgent(
     string memory _address,
     string memory _phone,
     string memory _note,
-    bool[3] memory _permissions,
+    bool[4] memory _permissions,
     string memory _domain,
     BranchInfo[] memory branchInfos
-) external onlySuperAdmin validAgent(_agent) whenNotPaused nonReentrant returns (uint[] memory newBranchIds) {
+) external onlySuperAdmin validAgent(_agent) whenNotPaused nonReentrant returns (uint[] memory  newBranchIds) {
     Agent storage agent = agents[_agent];
     
     // Update basic info
@@ -313,12 +362,13 @@ function updateAgent(
     newBranchIds = _updateSubBranchesByIds(_agent, branchInfos);
      // Grant permissions for new branches if agent already has permissions
     if (newBranchIds.length > 0) {
-        _grantPermissionsForNewBranches(_agent, newBranchIds, agent.permissions);
+        _grantPermissionsForNewBranches(_agent, newBranchIds, agent.permissions,agentBranchManagement[_agent]);
     }
+    console.log("cccccccccc:",agents[_agent].permissions[0]);
     // Update permissions with current branch IDs
     uint[] memory branchIds = agentToBranchIds[_agent];
-    _updatePermissions(_agent, _permissions, branchIds);
-    
+    _updatePermissions(_agent, _permissions, branchIds,agentBranchManagement[_agent]);
+    console.log("dddddddddd:",agents[_agent].permissions[0]);
     emit AgentUpdated(_agent, block.timestamp);
     
     return newBranchIds;
@@ -506,11 +556,12 @@ function _updateSubBranchesByIds(address _agent, BranchInfo[] memory branchInfos
 function _grantPermissionsForNewBranches(
     address _agent,
     uint[] memory _newBranchIds,
-    bool[3] memory _currentPermissions
+    bool[4] memory _currentPermissions,
+    address _branchManagementSc
 ) internal {
     // If agent already has IQR permission, grant it to new branches
     if (_currentPermissions[0]) {
-        _grantIQRPermission(_agent, _newBranchIds);
+        _grantIQRPermission(_agent, _newBranchIds,_branchManagementSc);
     }
     
     // If agent already has Loyalty permission, grant it to new branches
@@ -520,7 +571,10 @@ function _grantPermissionsForNewBranches(
     
     // If agent already has MeOS permission, grant it to new branches
     if (_currentPermissions[2]) {
-        _grantMeOSPermission(_agent, _newBranchIds);
+        _grantMeOSPermission(_agent, _newBranchIds,_branchManagementSc);
+    }
+    if (_currentPermissions[2]) {
+        _grantRobotPermission(_agent, _newBranchIds);
     }
 }
 /**
@@ -551,30 +605,59 @@ function _validateBranchDeletion(address _agent, uint _branchId) internal view {
  */
 function _updatePermissions(
     address _agent, 
-    bool[3] memory _newPermissions,
-    uint[] memory _branchIds
+    bool[4] memory _newPermissions,
+    uint[] memory _branchIds,
+    address _branchManagementSc
 ) internal {
     Agent storage agent = agents[_agent];
-    
-    for (uint8 i = 0; i < 3; i++) {
+    console.log("_newPermissions[0]:",_newPermissions[0]);
+    console.log("_newPermissions[1]:",_newPermissions[1]);
+    console.log("_newPermissions[2]:",_newPermissions[2]);
+    console.log("_newPermissions[3]:",_newPermissions[3]);
+    for (uint8 i = 0; i < 4; i++) {
         if (agent.permissions[i] != _newPermissions[i]) {
             if (_newPermissions[i]) {
                 // Grant permission
                 if (i == 0) {
-                    _grantIQRPermission(_agent, _branchIds);
+                    _grantIQRPermission(_agent, _branchIds,_branchManagementSc);
+                    console.log("kkkkkkkkkkk:",agents[_agent].permissions[0]);
                 } else if (i == 1) {
                     require(agent.permissions[0], "Need IQR permission to set Loyalty permission");
                     _grantLoyaltyPermission(_agent, _branchIds);
+                    console.log("wwwwww:",agents[_agent].permissions[0]);
                 } else if (i == 2) {
-                    _grantMeOSPermission(_agent, _branchIds);
+                    console.log("xxxxxx:",agents[_agent].permissions[0]);
+                    _grantMeOSPermission(_agent, _branchIds,_branchManagementSc);
+                    console.log("mmmmmmmmm:",agents[_agent].permissions[0]);
+                }
+                else if (i == 3) {
+                    _grantRobotPermission(_agent, _branchIds);
+                    console.log("fffffffff:",agents[_agent].permissions[0]);
                 }
             } else {
                 // Revoke permission for all branches
                 for (uint j = 0; j < _branchIds.length; j++) {
                     _revokePermission(_agent, _branchIds[j], i);
                 }
+                
             }
+            console.log("pppppppp:",agents[_agent].permissions[0]);
+            console.log("agent.permissions[0]:",agent.permissions[0]);
+            console.log("agent.permissions[1]:",agent.permissions[1]);
+            console.log("agent.permissions[2]:",agent.permissions[2]);
+            console.log("agent.permissions[3]:",agent.permissions[3]);
+            console.log("iiiiiii:",i);
+            console.log("_newPermissions[0]:",_newPermissions[0]);
+            console.log("_newPermissions[1]:",_newPermissions[1]);
+            console.log("_newPermissions[2]:",_newPermissions[2]);
+            console.log("_newPermissions[3]:",_newPermissions[3]);
             agent.permissions[i] = _newPermissions[i];
+
+            console.log("agent.permissions[0]aa:",agent.permissions[0]);
+            console.log("agent.permissions[1]aa:",agent.permissions[1]);
+            console.log("agent.permissions[2]aa:",agent.permissions[2]);
+            console.log("agent.permissions[3]aa:",agent.permissions[3]);
+            console.log("uuuuuuuuu:",agents[_agent].permissions[0]);
         }
     }
 }
@@ -593,6 +676,12 @@ function _updatePermissions(
                 IRestaurantLoyaltySystem(loyaltyContract).freeze();
             }
         } else if (_permissionType == 2) { // MeOS
+            // meosLicenses[_agent][_branchId].isActive = false;
+            address meosContract = agentMEOSContracts[_agent][_branchId];
+            if (meosContract != address(0)) {
+                IAgentMeos(meosContract).deactivate();
+            }
+        }else{
             meosLicenses[_agent][_branchId].isActive = false;
         }
         
@@ -631,8 +720,8 @@ function deleteAgent(address _agent)
     }
     
     // Revoke all permissions for all branches
-    bool[3] memory noPermissions = [false, false, false];
-    _updatePermissions(_agent, noPermissions, branchIds);
+    bool[4] memory noPermissions = [false, false, false,false];
+    _updatePermissions(_agent, noPermissions, branchIds,agentBranchManagement[_agent]);
     
     // Deactivate all branches
     for (uint i = 0; i < branchIds.length; i++) {

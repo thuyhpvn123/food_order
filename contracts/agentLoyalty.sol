@@ -182,7 +182,11 @@ contract RestaurantLoyaltySystem is
     event MemberGroupUpdated(bytes32 indexed groupId, string name, uint256 timestamp);
     event MemberGroupDeleted(bytes32 indexed groupId, uint256 timestamp);
     event MemberRemovedFromGroup(address indexed member, bytes32 indexed groupId, uint256 timestamp);
-
+    event MemberUpdated(
+        address indexed walletAddress,
+        string memberId,
+        uint256 timestamp
+    );
     // ============ MODIFIERS ============
     
     modifier onlyAdmin() {
@@ -261,7 +265,7 @@ contract RestaurantLoyaltySystem is
         maxPercentPerInvoice = 50; // 50%
     }
     
-    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+    function _authorizeUpgrade(address newImplementation) internal override  {}
     
     // ============ CONFIGURATION FUNCTIONS ============
     
@@ -382,7 +386,41 @@ contract RestaurantLoyaltySystem is
         
         emit MemberRegistered(msg.sender, input._memberId, block.timestamp);
     }
+    function updateMember(UpdateMemberInput memory input) external {
+        require(members[msg.sender].isActive, "Member not registered");
+        require(!members[msg.sender].isLocked, "Member account is locked");
+        require(bytes(input._memberId).length >= 8 && bytes(input._memberId).length <= 12, "Invalid member ID length");
 
+        Member storage member = members[msg.sender];
+        require(keccak256(abi.encodePacked(member.memberId)) == keccak256(abi.encodePacked(input._memberId)) || memberIdToAddress[input._memberId] == address(0), "Member ID already exists");
+        delete memberIdToAddress[member.memberId];
+        // Update member information
+        member.phoneNumber = input._phoneNumber;
+        member.firstName = input._firstName;
+        member.lastName = input._lastName;
+        member.whatsapp = input._whatsapp;
+        member.email = input._email;
+        member.avatar = input._avatar;
+        if(keccak256(abi.encodePacked(member.memberId)) != keccak256(abi.encodePacked(input._memberId)) ){
+            member.memberId = input._memberId;
+
+        }
+        
+        // Update in allMembers array
+        for (uint i = 0; i < allMembers.length; i++) {
+            if (keccak256(bytes(allMembers[i].memberId)) == keccak256(bytes(member.memberId))) {
+                allMembers[i] = member;
+                break;
+            }
+        }
+         
+        memberIdToAddress[input._memberId] = msg.sender;
+        emit MemberUpdated(
+            msg.sender, 
+            member.memberId, 
+            block.timestamp
+        );
+    }
      //contract Order gọi
     function updateLastBuyActivityAt(address user) external onlyOrder{
         members[msg.sender].lastBuyActivityAt = block.timestamp;

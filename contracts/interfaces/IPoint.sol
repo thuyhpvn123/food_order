@@ -10,6 +10,15 @@ pragma solidity ^0.8.20;
         string _email;
         string _avatar;
     }
+    struct UpdateMemberInput {
+        string _phoneNumber;
+        string _firstName;
+        string _lastName;
+        string _whatsapp;
+        string _email;
+        string _avatar;
+        string _memberId;
+    }
     struct Member {
         string memberId;           // Mã thành viên tự đặt (8-12 ký tự)
         address walletAddress;     // Địa chỉ ví MetaNode

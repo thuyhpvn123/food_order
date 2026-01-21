@@ -13,14 +13,23 @@ struct IQRContracts {
     address StaffAgentStore;
     address Points;
 }
+struct MeosContracts {
+    address Management;
+    address Order;
+    address Report;
+    address TimeKeeping;
+    address owner;      
+    address StaffAgentStore;
+    address Points;
+}
 struct AgentInfo {
     address walletAddress;
     string storeName;
     string storeAddress;
     uint256 numOfBranch;
-    bool[3] permissions;
+    bool[4] permissions;
     uint256 createdAt;
-    uint256[3] revenueByModule;
+    uint256[4] revenueByModule;
 }
 struct Agent {
     address walletAddress;
@@ -28,7 +37,7 @@ struct Agent {
     string storeAddress;
     string phone;
     string note;
-    bool[3] permissions; // [IQR, Loyalty, MeOS]
+    bool[4] permissions; // [IQR, Loyalty, MeOS,Robot]
     // string[] subLocations;
     // string[] subPhones;
     uint256 createdAt;
@@ -153,7 +162,30 @@ struct License {
 // ============================================================================
 // INTERFACES
 // ============================================================================
+interface IMeosFactory {
+}
+interface IAgentMeos {
+    function getTotalRevenue() external view returns (uint256);
+    function deactivate() external;
+    function reactivate() external;
+    function isActive() external view returns (bool);
+    function getMeosSCByAgent(address _agent,uint _branchId) external view returns(MeosContracts memory);
+    function transferOwnerIQR(
+        address _agent,
+        address _MANAGEMENT,
+        address _ORDER,
+        address _REPORT,
+        address _TIMEKEEPING
 
+    )external ;
+
+}
+interface IBMFactory {
+    function getAgentMEOSContract(address _agent, uint _branchId) external view returns (address) ;
+    function addManagerMainBranch(address _branchManagerProxy,address _agent, uint256[] memory branchIds)external;
+    function createBranchManagement(address _agent) external  returns (address);
+    function getBranchManagement(address _agent) external view returns (address);
+}
 interface IIQRFactory {
     function createAgentIQR(address _agent) external returns (address);
     function getAgentIQRContract(address _agent, uint _branchId) external view returns (address);   
@@ -162,7 +194,6 @@ interface IIQRFactory {
     function transferOwnerIQRContracts(address _agent, uint _branchId)external;
     function getIQRSCByAgent(address _agent,uint _branchId) external view returns(IQRContracts memory);
     function getIQRSCByAgentFromFactory(address _agent, uint _branchId) external view returns (IQRContracts memory) ;
-    function getBranchManagement(address _agent) external view returns (address);
     function getManagementSCByAgentsFromFactory(address _agent, uint[] memory _branchIds) external view returns (address[] memory managementScs);
 }
 interface ILoyaltyFactory {

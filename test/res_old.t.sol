@@ -65,6 +65,7 @@ contract RestaurantTest is Test {
     bytes32[] public selectedFeatureIdsDish1; //3 muc do cay cua dish1_code
     bytes32[] public selectedFeatureIdsDish2; //3 muc do beo cua dish2_code
     bytes32[] public selectedFeatureIdsDish3; //3 muc do ngot cua dish3_code
+    uint256 public eventId11;
     constructor() {
         vm.warp(1759724234);//11h17 -7/10/2025
         superAdmin = makeAddr("superAdmin");
@@ -605,6 +606,10 @@ contract RestaurantTest is Test {
         vm.startPrank(admin);
          
         bytes32 memberGroupId = POINTS.createMemberGroup("khach hang than thiet");
+        (string memory namePoint,,,,,) = POINTS.getPointsInfo();
+        POINTS.updateMemberGroup(memberGroupId,"nhom2",true);
+        MemberGroup[] memory memberGroups = POINTS.getAllGroups();
+        assertEq(memberGroups[0].name,"nhom2","should be equal");
         bytes32[] memory _targetGroupIds = new bytes32[](1);
         _targetGroupIds[0] = memberGroupId;
         MANAGEMENT.CreateDiscount(
@@ -1021,7 +1026,39 @@ contract RestaurantTest is Test {
         console.log("dishReport.ranking:",dishReport.ranking);
         (NewDish[] memory newDishes, uint totalCount1) = MANAGEMENT.GetNewDishesWithLimit(0,10);
         console.log("totalCount:",totalCount1);
+        customerGetPoints(payment.foodCharge - payment.discountAmount,payment.id);
     }
+    function customerGetPoints(uint256 _amount,bytes32 _invoiceId)public{
+        adminCreateEvent();
+        string memory memberID = "12345647589";
+        RegisterInPut memory input = RegisterInPut({
+            _memberId: memberID,
+            _phoneNumber: "0962345872",
+            _firstName: "Hoan",
+            _lastName: "Le",
+            _whatsapp: "0962345872",
+            _email: "hoan@gmail.com",
+            _avatar: "avatar"
+
+        });
+
+        POINTS.registerMember(input);
+        POINTS.earnPoints(memberID, _amount, _invoiceId, eventId11);
+    }
+    function adminCreateEvent()public{
+        vm.startPrank(admin);
+        uint startTime = currentTime;
+        uint endTime = startTime + 180 days;
+        eventId11 = POINTS.createEvent(
+            "Tang new member",
+            startTime,
+            endTime,
+            200, //+200point
+            bytes32(0)
+        );
+        vm.stopPrank();
+    }
+
     function hashAttributes(
         Attribute[] memory attrs
     ) internal pure returns (bytes32) {
@@ -1313,6 +1350,17 @@ contract RestaurantTest is Test {
     console.log(
         "-----------------------------------------------------------------------------"
     );  
+    //isStaff
+    bytesCodeCall = abi.encodeCall(
+    MANAGEMENT.isStaff,
+        (0xa81B65ec3931F94Ce38C443dE6b77f067D16d38c)
+    );
+    console.log("MANAGEMENT isStaff:");
+    console.logBytes(bytesCodeCall);
+    console.log(
+        "-----------------------------------------------------------------------------"
+    ); 
+
     //MANAGEMENT.setPoints(address(POINTS));
      bytesCodeCall = abi.encodeCall(
     MANAGEMENT.setPoints,
@@ -1321,7 +1369,74 @@ contract RestaurantTest is Test {
     console.logBytes(bytesCodeCall);
     console.log(
         "-----------------------------------------------------------------------------"
-    );  
+    ); 
+        //POINTS.getAllGroups
+    bytesCodeCall = abi.encodeCall(
+    POINTS.getAllGroups,
+        ());
+    console.log("POINTS getAllGroups:");
+    console.logBytes(bytesCodeCall);
+    console.log(
+        "-----------------------------------------------------------------------------"
+    ); 
+    //registerMember
+    RegisterInPut memory input = RegisterInPut({
+        _memberId: "12345647589",
+        _phoneNumber: "0962345872",
+        _firstName: "Hoan",
+        _lastName: "Le",
+        _whatsapp: "0962345872",
+        _email: "hoan@gmail.com",
+        _avatar: "avatar"
+
+    });
+    bytesCodeCall = abi.encodeCall(
+    POINTS.registerMember,
+        (
+            input
+        ));
+    console.log("POINTS registerMember:");
+    console.logBytes(bytesCodeCall);
+    console.log(
+        "-----------------------------------------------------------------------------"
+    );   
+
+    //  getPointsInfo
+    bytesCodeCall = abi.encodeCall(
+    POINTS.getPointsInfo,
+        (
+        ));
+    console.log("POINTS getPointsInfo:");
+    console.logBytes(bytesCodeCall);
+    console.log(
+        "-----------------------------------------------------------------------------"
+    );   
+
+    //createMemberGroup
+    bytesCodeCall = abi.encodeCall(
+    POINTS.createMemberGroup,
+        (
+            "khach hang than thiet"
+        ));
+    console.log("POINTS createMemberGroup:");
+    console.logBytes(bytesCodeCall);
+    console.log(
+        "-----------------------------------------------------------------------------"
+    );   
+
+    //POINTS.updateMemberGroup(address(MANAGEMENT));
+    bytesCodeCall = abi.encodeCall(
+    POINTS.updateMemberGroup,
+        (
+            0xda7c73023306e345b2c4351e72ee4d7fa304c38819cff86e08f3a35fac2b47b4,
+            "Nhom 22",
+            true
+        ));
+    console.log("POINTS updateMemberGroup:");
+    console.logBytes(bytesCodeCall);
+    console.log(
+        "-----------------------------------------------------------------------------"
+    );   
     //POINTS.setManagementSC(address(MANAGEMENT));
     bytesCodeCall = abi.encodeCall(
     POINTS.setManagementSC,

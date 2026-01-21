@@ -94,7 +94,7 @@ contract RestaurantOrder is
     event PaymentConfirmed(bytes32 indexed paymentId, address staff);
     event PaymentWithPoints(bytes32 indexed paymentId, address indexed customer, uint256 pointsUsed, uint256 pointsValue, uint256 remainingCash);
     event OrderConfirmed(uint table, bytes32 orderId);
-    event CallStaff(uint table, uint amount);
+    event CallStaff(uint table, uint amount, string memberId);
     event BatchCourseStatusUpdated(uint table, bytes32 _orderId, COURSE_STATUS newStatus);
     event CourseStatusUpdated(uint table, bytes32 _orderId, uint _courseId, COURSE_STATUS newStatus);
 
@@ -957,9 +957,9 @@ function _addOrderHistory(
         return true;
     }
 
-    function callStaff(uint table, uint amount) external {
+    function callStaff(uint table, uint amount, string memory memberId) external {
         address[] memory staffsPayment = MANAGEMENT.GetStaffRolePayment();
-        emit CallStaff(table, amount);
+        emit CallStaff(table, amount,memberId);
     }
 
     function BatchUpdateCourseStatus(

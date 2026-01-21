@@ -16,9 +16,10 @@ import "../contracts/mtd.sol";
 import "./res_old.t.sol";
 import "../contracts/staffMatch.sol";
 import "../contracts/interfaces/IManagement.sol";
-import "../contracts/branchManager1.sol";
+import "../contracts/branchManager.sol";
 import "../contracts/historyTracking.sol";
 import "../contracts/freegas.sol";
+import "../contracts/bmFactory.sol";
 
 // import {BranchInfoInput} from "../contracts/interfaces/IAgent.sol";
 /**
@@ -30,8 +31,6 @@ import "../contracts/freegas.sol";
 contract AgentManagementIntegrationTest is RestaurantTest {
      using Strings for uint256;
     // Contracts
-    AgentManagement public agentManagementImplementation;
-    AgentManagement public agentManagement;
     EnhancedAgentManagement public enhancedImplementation;
     EnhancedAgentManagement public enhanced;
     
@@ -43,20 +42,22 @@ contract AgentManagementIntegrationTest is RestaurantTest {
     
     RevenueManager public revenueManagerImplementation;
     RevenueManager public revenueManager;
-    
-    MTDToken public mtdTokenImplementation;
-    MTDToken public mtdToken;
-    
+        
     StaffAgentStore public staffAgentStoreImplementation;
     StaffAgentStore public staffAgentStore;
     HistoryTracking public historyTrackingIMP;
     // Test accounts
     BranchManagement public branchManagementImplementation;
+    BranchManagement public branchManager;
+
     FreeGasStorage   public freeGasImplementation;
     FreeGasStorage   public freeGasSc;
+
+    BMFactory public bmFactoryImplementation;
+    BMFactory public bmFactory;
+
     Management public management;
     RestaurantLoyaltySystem public Points;
-    BranchManagement public branchManager;
     
     // address public customer1;
     // address public customer2;
@@ -74,12 +75,6 @@ contract AgentManagementIntegrationTest is RestaurantTest {
         vm.startPrank(superAdmin);
         
         // 1. Deploy AgentManagement
-        agentManagementImplementation = new AgentManagement();
-        ERC1967Proxy agentProxy = new ERC1967Proxy(
-            address(agentManagementImplementation),
-            abi.encodeWithSignature("initialize()")
-        );
-        agentManagement = AgentManagement(address(agentProxy));
         
         // 2. Deploy IQRFactory
         iqrFactoryImplementation = new IQRFactory();
@@ -105,13 +100,6 @@ contract AgentManagementIntegrationTest is RestaurantTest {
         );
         revenueManager = RevenueManager(address(revenueProxy));
         
-        // 5. Deploy MTDToken
-        mtdTokenImplementation = new MTDToken();
-        ERC1967Proxy mtdProxy = new ERC1967Proxy(
-            address(mtdTokenImplementation),
-            abi.encodeWithSignature("initialize(uint256)", 1000000)
-        );
-        // mtdToken = MTDToken(address(mtdProxy));
         
         // 6. Deploy EnhancedAgentManagement (inherits from AgentManagement)
         enhancedImplementation = new EnhancedAgentManagement();
@@ -142,14 +130,29 @@ contract AgentManagementIntegrationTest is RestaurantTest {
             address(iqrFactory))
         );
         freeGasSc = FreeGasStorage(address(freeGasScProxy));
+        bmFactoryImplementation = new BMFactory();
+        ERC1967Proxy bmFactoryProxy = new ERC1967Proxy(
+            address(bmFactoryImplementation),
+            abi.encodeWithSignature("initialize()")
+        );
+        bmFactory = BMFactory(address(bmFactoryProxy));
         // Setup admin
         enhanced.setAdmin(superAdmin);
                
         enhanced.setFactoryContracts(
             address(iqrFactory),
             address(loyaltyFactory),
-            address(revenueManager)
-            // address(mtdToken)
+            address(revenueManager),
+            address(bmFactory)
+        );
+        bmFactory.setBranchManagerSC(
+            address(branchManagementImplementation),
+            address(historyTrackingIMP),
+            // address(freeGasSc),
+            address(staffAgentStore),
+            address(iqrFactory),
+            address(enhanced)
+
         );
         iqrFactory.setEnhancedAgent(address(enhanced));
         iqrFactory.setIQRSC(
@@ -161,10 +164,11 @@ contract AgentManagementIntegrationTest is RestaurantTest {
             0x603dbFC668521aB143Ee1018e4D80b13FDDedfBd,
             address(revenueManager),
             address(staffAgentStore),
-            address(branchManagementImplementation),
-            address(historyTrackingIMP),
+            // address(branchManagementImplementation),
+            // address(historyTrackingIMP),
             address(freeGasSc)
         );
+
         loyaltyFactory.setPointsImp(address(POINTS_IMP));
         loyaltyFactory.setEnhancedAgent(address(enhanced));
         revenueManager.setEnhancedAgent(address(enhanced));
@@ -179,7 +183,6 @@ contract AgentManagementIntegrationTest is RestaurantTest {
         
         console.log("=== Setup Complete ===");
         console.log("Super Admin:", superAdmin);
-        console.log("AgentManagement:", address(agentManagement));
         console.log("EnhancedAgentManagement:", address(enhanced));
         console.log("IQRFactory:", address(iqrFactory));
         console.log("LoyaltyFactory:", address(loyaltyFactory));
@@ -216,7 +219,7 @@ contract AgentManagementIntegrationTest is RestaurantTest {
     //     string memory storeAddress = "123 Main St";
     //     string memory phone = "0123456789";
     //     string memory note = "Test store";
-    //     bool[3] memory permissions = [true, true, true]; // All permissions
+    //     bool[4] memory permissions = [true, true, true]; // All permissions
     //     // string[] memory subLocations = new string[](2);
     //     // subLocations[0] = "Branch A";
     //     // subLocations[1] = "Branch B";
@@ -301,7 +304,7 @@ contract AgentManagementIntegrationTest is RestaurantTest {
         
         for (uint i = 0; i < agents.length; i++) {
             string memory storeName = string(abi.encodePacked("Store ", vm.toString(i + 1)));
-            bool[3] memory permissions = [true, true, false]; // IQR + Loyalty only
+            bool[4] memory permissions = [true, true, false, false]; // IQR + Loyalty only
             string[] memory subLocations = new string[](1);
             subLocations[0] = "Main Branch";
             string[] memory subPhones = new string[](1);
@@ -340,7 +343,7 @@ contract AgentManagementIntegrationTest is RestaurantTest {
         // First create an agent
         vm.startPrank(superAdmin);
         
-        bool[3] memory initialPermissions = [true, false, false];        
+        bool[4] memory initialPermissions = [true, false, false, false];        
         enhanced.createAgentWithAnalytics(
             agent1,
             "Old Store Name",
@@ -357,7 +360,7 @@ contract AgentManagementIntegrationTest is RestaurantTest {
         string memory newAddress = "New Address";
         string memory newPhone = "9876543210";
         string memory newNote = "Updated Note";
-        bool[3] memory newPermissions = [true, true, true]; // Grant all permissions
+        bool[4] memory newPermissions = [true, true, true, false]; // Grant all permissions
         uint[] memory branchIds = enhanced.getAgentBranchIds(agent1);
         enhanced.BatchSetAllAgentIQR(agent1);
        
@@ -373,9 +376,11 @@ contract AgentManagementIntegrationTest is RestaurantTest {
             "domain_new",
             agentInfo.branches
         );
+        Agent memory updatedAgent = enhanced.getAgent(agent1);
+        console.log("bbbbbbbbbbbbb");
         enhanced.BatchSetPointsIQR(agent1,branchIds);
         // Verify updates
-        Agent memory updatedAgent = enhanced.getAgent(agent1);
+        updatedAgent = enhanced.getAgent(agent1);
         assertEq(updatedAgent.storeName, newStoreName);
         assertEq(updatedAgent.storeAddress, newAddress);
         assertEq(updatedAgent.phone, newPhone);
@@ -434,7 +439,7 @@ contract AgentManagementIntegrationTest is RestaurantTest {
         vm.startPrank(superAdmin);
         
         // Create agent
-        bool[3] memory permissions = [true, false, true]; // IQR + MeOS (no loyalty)
+        bool[4] memory permissions = [true, false, true, false]; // IQR + MeOS (no loyalty)
         
         enhanced.createAgentWithAnalytics(
             agent1,
@@ -478,7 +483,7 @@ contract AgentManagementIntegrationTest is RestaurantTest {
         vm.startPrank(superAdmin);
         
         // Create agent with loyalty permission
-        bool[3] memory permissions = [true, true, false];
+        bool[4] memory permissions = [true, true, false, false];
         string[] memory subLocations = new string[](1);
         subLocations[0] = "Branch";
         string[] memory subPhones = new string[](1);
@@ -518,7 +523,7 @@ contract AgentManagementIntegrationTest is RestaurantTest {
         vm.startPrank(superAdmin);
         
         // Create agent with loyalty
-        bool[3] memory permissions = [true, true, false];
+        bool[4] memory permissions = [true, true, false, false];
         string[] memory subLocations = new string[](1);
         subLocations[0] = "Branch";
         string[] memory subPhones = new string[](1);
@@ -567,7 +572,7 @@ contract AgentManagementIntegrationTest is RestaurantTest {
     function test_GetDeletedAgents_Multiple() public {
         vm.startPrank(superAdmin);
         
-        bool[3] memory permissions = [true, false, false];
+        bool[4] memory permissions = [true, false, false, false];
         string[] memory subLocations = new string[](1);
         subLocations[0] = "Branch";
         string[] memory subPhones = new string[](1);
@@ -618,7 +623,7 @@ contract AgentManagementIntegrationTest is RestaurantTest {
     //     vm.startPrank(superAdmin);
         
     //     // Create agent with loyalty
-    //     bool[3] memory permissions = [false, true, false];
+    //     bool[4] memory permissions = [false, true, false, false];
     //     string[] memory subLocations = new string[](1);
     //     subLocations[0] = "Branch";
     //     string[] memory subPhones = new string[](1);
@@ -671,7 +676,7 @@ contract AgentManagementIntegrationTest is RestaurantTest {
     // function test_MigrateLoyaltyTokens_Success() public {
     //     vm.startPrank(superAdmin);
         
-    //     bool[3] memory permissions = [false, true, false];
+    //     bool[4] memory permissions = [false, true, false, false];
     //     string[] memory subLocations = new string[](1);
     //     subLocations[0] = "Branch";
     //     string[] memory subPhones = new string[](1);
@@ -740,10 +745,10 @@ contract AgentManagementIntegrationTest is RestaurantTest {
         vm.startPrank(superAdmin);
         
         // Create agents with different permissions
-        bool[3] memory allPermissions = [true, true, true];
-        bool[3] memory iqrOnly = [true, false, false];
-        bool[3] memory loyaltyAndIqr = [true, true, false];
-        bool[3] memory noFilter = [false, false, false];
+        bool[4] memory allPermissions = [true, true, true, false];
+        bool[4] memory iqrOnly = [true, false, false, false];
+        bool[4] memory loyaltyAndIqr = [true, true, false, false];
+        bool[4] memory noFilter = [false, false, false, false];
 
         string[] memory subLocations = new string[](1);
         subLocations[0] = "Branch";
@@ -812,7 +817,7 @@ contract AgentManagementIntegrationTest is RestaurantTest {
         );
         
         // Test 1: Get all agents (no permission filter)
-        // bool[3] memory noFilter = [false, false, false];
+        // bool[4] memory noFilter = [false, false, false, false];
         (
             AgentInfo[] memory allAgentsPage1,
             uint256 totalCount,
@@ -833,7 +838,7 @@ contract AgentManagementIntegrationTest is RestaurantTest {
         assertEq(currentPage, 1);
         
         // Test 2: Filter by IQR permission only
-        bool[3] memory iqrFilter = [true, false, false];
+        bool[4] memory iqrFilter = [true, false, false, false];
         (
             AgentInfo[] memory iqrAgents,
             uint256 iqrCount,
@@ -857,7 +862,7 @@ contract AgentManagementIntegrationTest is RestaurantTest {
         }
         
         // Test 3: Filter by Loyalty permission only
-        bool[3] memory loyaltyFilter = [false, true, false];
+        bool[4] memory loyaltyFilter = [false, true, false, false];
         (
             AgentInfo[] memory loyaltyAgents,
             uint256 loyaltyCount,
@@ -875,7 +880,7 @@ contract AgentManagementIntegrationTest is RestaurantTest {
         assertEq(loyaltyCount, 3, "Should have 3 agents with Loyalty");
         
         // Test 4: Filter by all permissions (AND logic)
-        bool[3] memory allFilter = [true, true, true];
+        bool[4] memory allFilter = [true, true, true, false];
         (
             AgentInfo[] memory fullPermAgents,
             uint256 fullPermCount,
@@ -1021,7 +1026,7 @@ contract AgentManagementIntegrationTest is RestaurantTest {
         vm.startPrank(superAdmin);
         
         // Create agent with only IQR
-        bool[3] memory permissions = [true, false, false];
+        bool[4] memory permissions = [true, false, false, false];
         string[] memory subLocations = new string[](1);
         subLocations[0] = "Branch";
         string[] memory subPhones = new string[](1);
@@ -1042,7 +1047,7 @@ contract AgentManagementIntegrationTest is RestaurantTest {
         enhanced.BatchSetAllAgentIQR(agent1);
 
         // Try to find agents with all permissions (should be empty)
-        bool[3] memory allFilter = [true, true, true];
+        bool[4] memory allFilter = [true, true, true, false];
         (
             AgentInfo[] memory agents,
             uint256 totalCount,
@@ -1081,8 +1086,8 @@ contract AgentManagementIntegrationTest is RestaurantTest {
         // STEP 1: Create multiple agents with different configurations
         console.log("Step 1: Creating agents...");
         
-        bool[3] memory fullPerms = [true, true, true];
-        bool[3] memory partialPerms = [true, true, false];
+        bool[4] memory fullPerms = [true, true, true, false];
+        bool[4] memory partialPerms = [true, true, false, false];
         enhanced.createAgentWithAnalytics(
             agent1,
             "Premium Store",
@@ -1164,7 +1169,7 @@ contract AgentManagementIntegrationTest is RestaurantTest {
         
         vm.startPrank(superAdmin);
         
-        bool[3] memory loyaltyFilter = [false, true, false];
+        bool[4] memory loyaltyFilter = [false, true, false, false];
         (
             AgentInfo[] memory loyaltyAgents,
             uint256 loyaltyCount,
@@ -1266,7 +1271,7 @@ contract AgentManagementIntegrationTest is RestaurantTest {
             uint256 totalRevenue,
             uint256 totalOrders,
             uint256 avgPerformance,
-            uint256[3] memory permStats
+            uint256[4] memory permStats
         ) = enhanced.getSystemAnalytics();
         
         console.log("Total agents:", totalAgents);
@@ -1293,7 +1298,7 @@ contract AgentManagementIntegrationTest is RestaurantTest {
         
         vm.stopPrank();
         //
-        address branchManagerAdd = iqrFactory.getBranchManagement(agent1);
+        address branchManagerAdd = bmFactory.getBranchManagement(agent1);
         branchManager = BranchManagement(branchManagerAdd);
         ManagerInfo[] memory managerInfos = branchManager.getAllManagers();
         console.log("managerInfos.length:",managerInfos.length);
@@ -1311,6 +1316,12 @@ contract AgentManagementIntegrationTest is RestaurantTest {
         console.log("hasRole:",kq);
         Points = RestaurantLoyaltySystem(iQRContracts.Points);
         console.log("Points:",address(Points));
+        vm.startPrank(agent2);
+        bytes32 memberGroupId = Points.createMemberGroup("khach hang than thiet");
+        Points.updateMemberGroup(memberGroupId,"nhom22",true);
+        vm.stopPrank();
+        MemberGroup[] memory memberGroups = Points.getAllGroups();
+        console.log("memberGroups[0].name:",memberGroups[0].name);
         _createStaff();
         _createDishes();
         _createTables();
@@ -1337,6 +1348,7 @@ contract AgentManagementIntegrationTest is RestaurantTest {
             false,
             3
         );
+
         bytes32 optionId2 = management.CreateDishOptions(
             "Do Beo",
             featureNames1,
@@ -1558,7 +1570,7 @@ contract AgentManagementIntegrationTest is RestaurantTest {
             uint256 revenue,
             uint256 orders,
             uint256 avgPerf,
-            uint256[3] memory perms
+            uint256[4] memory perms
         ) = enhanced.getSystemAnalytics();
         
         console.log("\n--- System Stats ---");
@@ -1580,7 +1592,7 @@ contract AgentManagementIntegrationTest is RestaurantTest {
             1855995908,
             "createdAt",
             false,
-            2,
+            0,
             20
         ));
         console.log("enhanced getAgentsInfoPaginated:");
@@ -1615,27 +1627,27 @@ contract AgentManagementIntegrationTest is RestaurantTest {
             "-----------------------------------------------------------------------------"
         );
         //setIQRSC
-        bytesCodeCall = abi.encodeCall(
-            iqrFactory.setIQRSC,
-            (
-                0x68d8e04b9d2e3e3B80743b2b451f0Ad05fcbab50,
-                0x16Cd2D2E63e40810D1908D756838EE9ED32339cf,
-                0xf16eBa3FcB56926c5bc9dE91A0E0bd611E4BCCde,
-                0x5d05DbdE125824dD73cAe3Dd0f3908CB32B587F2,
-                0x10F4A365ff344b3Af382aBdB507c868F1c22f592,
-                0x603dbFC668521aB143Ee1018e4D80b13FDDedfBd,
-                0x1510151015101510151015101510151015101510,
-                0x1510151015101510151015101510151015101510,
-                0x5419997F895de4BF3B05080202122c09d9FE5151,
-                0x1510151015101510151015101510151015101510,
-                0x1510151015101510151015101510151015101510
-            )
-        );
-        console.log("iqrFactory: setIQRSC");
-        console.logBytes(bytesCodeCall);
-        console.log(
-            "-----------------------------------------------------------------------------"
-        );  
+        // bytesCodeCall = abi.encodeCall(
+        //     iqrFactory.setIQRSC,
+        //     (
+        //         0x68d8e04b9d2e3e3B80743b2b451f0Ad05fcbab50,
+        //         0x16Cd2D2E63e40810D1908D756838EE9ED32339cf,
+        //         0xf16eBa3FcB56926c5bc9dE91A0E0bd611E4BCCde,
+        //         0x5d05DbdE125824dD73cAe3Dd0f3908CB32B587F2,
+        //         0x10F4A365ff344b3Af382aBdB507c868F1c22f592,
+        //         0x603dbFC668521aB143Ee1018e4D80b13FDDedfBd,
+        //         0x1510151015101510151015101510151015101510,
+        //         0x1510151015101510151015101510151015101510,
+        //         0x5419997F895de4BF3B05080202122c09d9FE5151,
+        //         0x1510151015101510151015101510151015101510,
+        //         0x0000000000000000000000000000000000000000
+        //     )
+        // );
+        // console.log("iqrFactory: setIQRSC");
+        // console.logBytes(bytesCodeCall);
+        // console.log(
+        //     "-----------------------------------------------------------------------------"
+        // );  
 
     //     //
     //     bytesCodeCall = abi.encodeCall(
@@ -1714,8 +1726,8 @@ contract AgentManagementIntegrationTest is RestaurantTest {
     //         "-----------------------------------------------------------------------------"
     //     );  
         //getAgentsInfoPaginatedWithPemissions
-        bool[3] memory noFilter = [false, false, false];
-        bool[3] memory allFilter = [true,true,false];
+        bool[4] memory noFilter = [false, false, false, false];
+        bool[4] memory allFilter = [true,true,false, false];
         bytesCodeCall = abi.encodeCall(
             enhanced.getAgentsInfoPaginatedWithPemissions,
             (
@@ -1764,7 +1776,7 @@ contract AgentManagementIntegrationTest is RestaurantTest {
     //         "-----------------------------------------------------------------------------"
     //     );  
     //createAgentWithAnalytics
-    bool[3] memory filter = [true,true,false];
+    bool[4] memory filter = [true,true,false, false];
     bytesCodeCall = abi.encodeCall(
         enhanced.createAgentWithAnalytics,
         (
@@ -1841,7 +1853,7 @@ contract AgentManagementIntegrationTest is RestaurantTest {
     ); 
     //getBranchManagement
     bytesCodeCall = abi.encodeCall(
-        iqrFactory.getBranchManagement,
+        bmFactory.getBranchManagement,
         (
             0x739b6287F81436B433145d76aE4713875864dBd8
         ));
@@ -1934,7 +1946,7 @@ contract AgentManagementIntegrationTest is RestaurantTest {
 
     //updateAgent
     BranchInfo[] memory branchInfos = new BranchInfo[](3);
-    filter = [true,true,false];
+    filter = [true,true,false, false];
     bytesCodeCall = abi.encodeCall(
         enhanced.updateAgent,
         (

@@ -2651,46 +2651,46 @@ function SortDishesWithOrderRange(uint256 from, uint256 topN) public {
     //     return false;
     // }
         // Lấy danh sách discounts tự động(all) cho user
-    // function GetAutoDiscountsTypeAllForUser(address _user) external view returns (Discount[] memory) {
-    //     uint count = 0;
+    function GetAutoDiscountsTypeAllForUser(address _user) external view returns (Discount[] memory) {
+        uint count = 0;
         
-    //     // Đếm số discounts hợp lệ
-    //     for (uint i = 0; i < discounts.length; i++) {
-    //         Discount memory d = discounts[i];
-    //         if (_isDiscountAllApplicableForUser(d, _user)) {
-    //             count++;
-    //         }
-    //     }
+        // Đếm số discounts hợp lệ
+        for (uint i = 0; i < discounts.length; i++) {
+            Discount memory d = discounts[i];
+            if (_isDiscountAllApplicableForUser(d, _user)) {
+                count++;
+            }
+        }
         
-    //     Discount[] memory result = new Discount[](count);
-    //     uint index = 0;
+        Discount[] memory result = new Discount[](count);
+        uint index = 0;
         
-    //     for (uint i = 0; i < discounts.length; i++) {
-    //         Discount memory d = discounts[i];
-    //         if (_isDiscountAllApplicableForUser(d, _user)) {
-    //             result[index] = d;
-    //             index++;
-    //         }
-    //     }
+        for (uint i = 0; i < discounts.length; i++) {
+            Discount memory d = discounts[i];
+            if (_isDiscountAllApplicableForUser(d, _user)) {
+                result[index] = d;
+                index++;
+            }
+        }
         
-    //     return result;
-    // }
+        return result;
+    }
 
-    // function _isDiscountAllApplicableForUser(
-    //     Discount memory d,
-    //     address _user
-    // ) internal view returns (bool) {
-    //     if (!d.active) return false;
-    //     if (block.timestamp < d.from || block.timestamp > d.to) return false;
-    //     if (d.amountUsed >= d.amountMax) return false;
+    function _isDiscountAllApplicableForUser(
+        Discount memory d,
+        address _user
+    ) internal view returns (bool) {
+        if (!d.active) return false;
+        if (block.timestamp < d.from || block.timestamp > d.to) return false;
+        if (d.amountUsed >= d.amountMax) return false;
         
-    //     // Check discount type
-    //     if (d.discountType == DiscountType.AUTO_ALL) {
-    //         return true;
-    //     }
+        // Check discount type
+        if (d.discountType == DiscountType.AUTO_ALL) {
+            return true;
+        }
         
-    //     return false;
-    // }
+        return false;
+    }
 
     function GetDiscount(
         string memory _code

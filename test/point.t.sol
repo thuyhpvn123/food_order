@@ -1009,6 +1009,8 @@ contract RestaurantLoyaltySystemTest is RestaurantTest {
         assertEq(txIds[0], 2); //tx dau tien la issue point
         assertEq(txIds[1], 3);
         assertEq(txIds[2], 4);
+        (Transaction[] memory result,uint256 totalCount) = POINTS.getMemberTransactionsPagination(customer1,0,10);
+        console.log("totalCount la:",totalCount);
     }
     
     function testGetTransaction() public {

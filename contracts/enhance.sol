@@ -5,7 +5,7 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {AgentManagement} from "./agent.sol";
-import {PaginationResult,License,AgentInfo,Agent, AgentAnalytics, TimeFilter, IIQRFactory, ILoyaltyFactory, IRestaurantLoyaltySystem, IAgentIQR, IRevenueManager,IQRContracts,BranchInfo,BranchInfoInput} from "./interfaces/IAgent.sol";
+import {PaginationResult,License,AgentInfo,Agent, AgentAnalytics, TimeFilter, IIQRFactory, ILoyaltyFactory, IRestaurantLoyaltySystem, IAgentIQR, IRevenueManager,IQRContracts,BranchInfo,BranchInfoInput,IBMFactory} from "./interfaces/IAgent.sol";
 // import "forge-std/console.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 
@@ -42,7 +42,7 @@ contract EnhancedAgentManagement is AgentManagement {
         string memory _address,
         string memory _phone,
         string memory _note,
-        bool[3] memory _permissions,
+        bool[4] memory _permissions,
         // string[] memory _subLocations,
         // string[] memory _subPhones,
         string memory _domain,
@@ -93,7 +93,7 @@ contract EnhancedAgentManagement is AgentManagement {
         string memory _address,
         string memory _phone,
         string memory _note,
-        bool[3] memory _permissions,
+        bool[4] memory _permissions,
         // string[] memory _subLocations,
         // string[] memory _subPhones,
         string memory _domain,
@@ -177,7 +177,7 @@ contract EnhancedAgentManagement is AgentManagement {
     }
 
     function _setAgentIQR(address _agent,uint _branchId) internal {
-        address _branchManagement = IIQRFactory(iqrFactory).getBranchManagement(_agent);
+        address _branchManagement = IBMFactory(bmFactory).getBranchManagement(_agent);
         require(_branchManagement != address(0),"branchMangament not set yet");
         IIQRFactory(iqrFactory).setAgentIQR(_agent,_branchId, _branchManagement);
     }
@@ -323,7 +323,7 @@ contract EnhancedAgentManagement is AgentManagement {
      */
     function searchAgentsAdvanced(
         string memory _storeName,
-        bool[3] memory _requiredPermissions,
+        bool[4] memory _requiredPermissions,
         uint256 _minRevenue,
         uint256 _minPerformanceScore,
         TimeFilter memory _timeFilter
@@ -460,7 +460,7 @@ contract EnhancedAgentManagement is AgentManagement {
     //  */
     // function bulkUpdatePermissions(
     //     address[] memory _agents,
-    //     bool[3] memory _permissions
+    //     bool[4] memory _permissions
     // ) external onlySuperAdmin nonReentrant returns (uint256 successCount, uint256 failureCount) {
     //     for (uint256 i = 0; i < _agents.length; i++) {
     //         if (_safeBulkUpdatePermission(_agents[i], _permissions)) {
@@ -478,7 +478,7 @@ contract EnhancedAgentManagement is AgentManagement {
     //  */
     // function _safeBulkUpdatePermission(
     //     address _agent,
-    //     bool[3] memory _newPermissions
+    //     bool[4] memory _newPermissions
     // ) internal returns (bool) {
     //     // Validate agent
     //     if (!agents[_agent].exists || !agents[_agent].isActive) {
@@ -595,7 +595,7 @@ contract EnhancedAgentManagement is AgentManagement {
     //     }
         
     //     // Revoke all permissions
-    //     bool[3] memory noPermissions = [false, false, false];
+    //     bool[4] memory noPermissions = [false, false, false];
     //     _safeBulkUpdatePermission(_agent, noPermissions);
         
     //     // Mark as deleted
@@ -691,7 +691,7 @@ contract EnhancedAgentManagement is AgentManagement {
         uint256 totalRevenue,
         uint256 totalOrders,
         uint256 averagePerformanceScore,
-        uint256[3] memory permissionStats // [IQR count, Loyalty count, MeOS count]
+        uint256[4] memory permissionStats // [IQR count, Loyalty count, MeOS count]
     ) {
         totalAgents = agentList.length;
         
@@ -745,7 +745,7 @@ contract EnhancedAgentManagement is AgentManagement {
         uint256 activeAgents,
         uint256 totalRevenue,
         uint256 totalOrders,
-        uint256[3] memory revenueByModule, // [IQR, Loyalty, MeOS]
+        uint256[4] memory revenueByModule, // [IQR, Loyalty, MeOS]
         uint256 averagePerformance
     ) {
         uint256 totalScore = 0;
@@ -825,7 +825,7 @@ contract EnhancedAgentManagement is AgentManagement {
         validAgent(_agent) 
         returns (
             bool isActive,
-            bool[3] memory permissions,
+            bool[4] memory permissions,
             bool hasActiveLoyalty,
             bool hasActiveMeOS,
             bool hasActiveIQR,
@@ -961,12 +961,13 @@ contract EnhancedAgentManagement is AgentManagement {
         Agent memory agent = agents[_agent];
         
         // Get revenue data
-        uint256[3] memory revenueByModule;
+        uint256[4] memory revenueByModule;
         if (revenueManager != address(0)) {
-            (uint256 iqr, uint256 loyalty, uint256 meos, ) = IRevenueManager(revenueManager).getAgentRevenue(_agent);
+            (uint256 iqr, uint256 loyalty, uint256 meos,uint robot ) = IRevenueManager(revenueManager).getAgentRevenue(_agent);
             revenueByModule[0] = iqr;
             revenueByModule[1] = loyalty;
             revenueByModule[2] = meos;
+            revenueByModule[3] = robot;
         }
         
         // Get number of branches (subLocations)
@@ -1093,7 +1094,7 @@ function getAgentsInfoPaginatedWithPemissionsSearch(
     bool _ascending,
     uint256 _page,
     uint256 _pageSize,
-    bool[3] memory _permissionFilter,
+    bool[4] memory _permissionFilter,
     string memory _searchTerm  // NEW: Search parameter
 ) external view returns (
     AgentInfo[] memory agents,
@@ -1280,7 +1281,7 @@ function getAgentsInfoPaginatedWithPemissions(
         bool _ascending,
         uint256 _page,
         uint256 _pageSize,
-        bool[3] memory _permissionFilter  // [IQR, Loyalty, MeOS] - true = must have, false = ignore
+        bool[4] memory _permissionFilter  // [IQR, Loyalty, MeOS] - true = must have, false = ignore
     ) external view returns (
         AgentInfo[] memory agents,
         uint256 totalCount,
@@ -1329,7 +1330,7 @@ function getAgentsInfoPaginatedWithPemissions(
      */
     function _filterAgentsByPermissions(
         address[] memory _agents,
-        bool[3] memory _permissionFilter
+        bool[4] memory _permissionFilter
     ) internal view returns (address[] memory) {
         // Count matching agents
         uint256 count = 0;
@@ -1358,7 +1359,7 @@ function getAgentsInfoPaginatedWithPemissions(
      */
     function _hasRequiredPermissions(
         address _agent,
-        bool[3] memory _required
+        bool[4] memory _required
     ) internal view returns (bool) {
         Agent memory agent = agents[_agent];
         
